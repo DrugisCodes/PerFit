@@ -1,0 +1,14 @@
+/* src/chrome-extension/popup/popup-style.css */
+html, body {
+  /* Lås bredden så den er smal og fin */
+  width: 350px !important;
+  
+  /* FJERN faste høyder. Bruk 'auto' så vinduet krymper til innholdet */
+  height: auto !important;
+  min-height: 0 !important;
+  
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background-color: white;
+}

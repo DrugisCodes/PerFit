@@ -1,0 +1,8 @@
+/* src/chrome-extension/options/options-style.css */
+html, body {
+  width: 100%;       /* Let the page fill the entire screen */
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+  background-color: #f3f4f6; /* Light gray background for the whole page */
+}
