@@ -12,10 +12,11 @@
 export type GarmentCategory = 'top' | 'bottom' | 'shoes' | 'unknown';
 
 export interface SizeRow {
-  intSize: string;      // International size (S, M, L, XL, etc.)
+  intSize: string;      // International size (S, M, L, XL, etc.) or EU shoe size
   chest: number;        // Chest measurement in cm
   waist: number;        // Waist measurement in cm
   hip: number;          // Hip measurement in cm
+  footLength?: number;  // Foot length in cm (for shoes)
   rowIndex: number;     // Index of the row in the table (for highlighting)
 }
 
@@ -27,6 +28,8 @@ export interface UserProfile {
   inseam: string;
   torsoLength: string;
   shoeSize: string;
+  height: string;         // Height in cm (for text-based matching)
+  footLength?: string;    // Foot length in cm (for shoe matching)
   fitPreference?: number; // 1-10, where 5 is regular fit
 }
 
@@ -68,9 +71,9 @@ export interface StoreProvider {
    * 2. Parse each row to extract INT size, chest, waist, and hip measurements
    * 3. Return an array of SizeRow objects
    * 
-   * @returns SizeRow[] - Array of size data, or empty array if scraping fails
+   * @returns Promise<SizeRow[]> - Array of size data, or empty array if scraping fails
    */
-  scrapeTableData: () => SizeRow[];
+  scrapeTableData: () => Promise<SizeRow[]> | SizeRow[];
 
   /**
    * Detect the category of garment from table headers
@@ -91,8 +94,9 @@ export interface StoreProvider {
    * Highlight a specific size row in the size table
    * 
    * @param rowIndex - The index of the row to highlight
+   * @param fitNote - Optional fit note to display for shoes (e.g., "IDEELL (+0.5 cm plass)")
    */
-  highlightRow: (rowIndex: number) => void;
+  highlightRow: (rowIndex: number, fitNote?: string) => void;
 }
 
 /**
@@ -115,4 +119,5 @@ export interface SizeRecommendation {
   targetChest: number;    // Target chest after adding buffer
   buffer: number;         // Buffer added based on fit preference
   matchedRow?: SizeRow;   // The table row that matched
+  fitNote?: string;       // Fit difference note for shoes (e.g., "IDEELL (+0.5 cm plass)")
 }

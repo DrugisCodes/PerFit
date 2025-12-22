@@ -7,6 +7,15 @@ interface SizeRow {
   chest: number;
   waist: number;
   hip: number;
+  footLength?: number;
+  rowIndex?: number;
+}
+
+// Grensesnitt for skostørrelser
+interface ShoeSize {
+  size: string;
+  footLength: number;
+  isInterpolated: boolean;
 }
 
 // Beregn buffer (ekstra cm) basert på fit preference
@@ -37,6 +46,384 @@ function findElementByText(tag: string, text: string): HTMLElement | null {
     null
   );
   return result.singleNodeValue as HTMLElement;
+}
+
+/**
+ * Skrap alle tilgjengelige størrelser fra 'Velg størrelse' dropdown
+ */
+function scrapeDropdownSizes(): string[] {
+  try {
+    const dropdownSizes: string[] = [];
+    
+    // Finn størrelsesvelger-knapper
+    const sizeButtons = document.querySelectorAll('[data-testid*="size"], [class*="size"], button[aria-label*="størrelse"]');
+    
+    sizeButtons.forEach(button => {
+      const sizeText = button.textContent?.trim();
+      if (sizeText && /^\d+/.test(sizeText)) {
+        dropdownSizes.push(sizeText);
+      }
+    });
+
+    // Sjekk også select-elementer
+    const selectElements = document.querySelectorAll('select');
+    selectElements.forEach(select => {
+      const options = select.querySelectorAll('option');
+      options.forEach(option => {
+        const value = option.value.trim();
+        const text = option.textContent?.trim();
+        if (value && /^\d+/.test(value)) {
+          dropdownSizes.push(value);
+        } else if (text && /^\d+/.test(text)) {
+          dropdownSizes.push(text);
+        }
+      });
+    });
+
+    const uniqueSizes = Array.from(new Set(dropdownSizes)).sort((a, b) => {
+      const aNum = parseFloat(a.replace(',', '.'));
+      const bNum = parseFloat(b.replace(',', '.'));
+      return aNum - bNum;
+    });
+
+    console.log(`PerFit: Fant ${uniqueSizes.length} størrelser i dropdown:`, uniqueSizes);
+    return uniqueSizes;
+  } catch (error) {
+    console.error("PerFit: Feil ved skraping av dropdown-størrelser:", error);
+    return [];
+  }
+}
+
+/**
+ * Rens skostørrelse-streng for å håndtere halvstørrelser
+ * Konverterer "43 1/3" til "43.33", "43.5" forblir "43.5"
+ */
+function cleanShoeSize(sizeStr: string): string {
+  sizeStr = sizeStr.trim();
+  
+  // Håndter brøker som "43 1/3"
+  const fractionMatch = sizeStr.match(/(\d+)\s+(\d+)\/(\d+)/);
+  if (fractionMatch) {
+    const whole = parseInt(fractionMatch[1]);
+    const numerator = parseInt(fractionMatch[2]);
+    const denominator = parseInt(fractionMatch[3]);
+    const decimal = (whole + numerator / denominator).toFixed(2);
+    return decimal;
+  }
+  
+  // Erstatt komma med punktum
+  return sizeStr.replace(',', '.');
+}
+
+/**
+ * Interpoler fotlengde for mellomstørrelser
+ * 
+ * Eksempel: Hvis tabellen viser:
+ * - 43 → 27.0cm
+ * - 44 → 27.7cm
+ * 
+ * Og dropdown har 43 1/3, beregn:
+ * 43 1/3 ≈ 27.0 + (27.7 - 27.0) * (1/3) = 27.23cm
+ */
+function interpolateFootLength(size: string, tableSizes: ShoeSize[]): number | null {
+  const sizeNum = parseFloat(size.replace(',', '.').replace(/\s+/g, ''));
+  
+  if (isNaN(sizeNum) || tableSizes.length < 2) {
+    return null;
+  }
+
+  // Finn de to omkringliggende helstørrelsene i tabellen
+  let lowerSize: ShoeSize | null = null;
+  let upperSize: ShoeSize | null = null;
+
+  for (let i = 0; i < tableSizes.length - 1; i++) {
+    const currentNum = parseFloat(tableSizes[i].size.replace(',', '.'));
+    const nextNum = parseFloat(tableSizes[i + 1].size.replace(',', '.'));
+    
+    if (currentNum <= sizeNum && sizeNum <= nextNum) {
+      lowerSize = tableSizes[i];
+      upperSize = tableSizes[i + 1];
+      break;
+    }
+  }
+
+  if (!lowerSize || !upperSize) {
+    return null;
+  }
+
+  // Lineær interpolering
+  const lowerNum = parseFloat(lowerSize.size.replace(',', '.'));
+  const upperNum = parseFloat(upperSize.size.replace(',', '.'));
+  const ratio = (sizeNum - lowerNum) / (upperNum - lowerNum);
+  const interpolated = lowerSize.footLength + (upperSize.footLength - lowerSize.footLength) * ratio;
+  
+  console.log(`PerFit: Interpolerte størrelse ${size} → ${interpolated.toFixed(2)}cm (mellom ${lowerSize.size}=${lowerSize.footLength}cm og ${upperSize.size}=${upperSize.footLength}cm)`);
+  
+  return Math.round(interpolated * 100) / 100; // Rund til 2 desimaler
+}
+
+/**
+ * Finn fit hint fra Zalando-siden
+ * Ser etter tekst som "Varen er liten" eller "Varen er stor"
+ */
+function extractFitHint(): string | null {
+  try {
+    const pageText = document.body.textContent || '';
+    
+    if (pageText.includes('Varen er liten') || pageText.includes('liten i størrelsen')) {
+      console.log("PerFit: Fit hint oppdaget - Varen er LITEN");
+      return 'liten';
+    }
+    
+    if (pageText.includes('Varen er stor') || pageText.includes('stor i størrelsen')) {
+      console.log("PerFit: Fit hint oppdaget - Varen er STOR");
+      return 'stor';
+    }
+    
+    console.log("PerFit: Ingen spesiell fit hint funnet (sann til størrelse antatt)");
+    return null;
+  } catch (error) {
+    console.error("PerFit: Feil ved henting av fit hint:", error);
+    return null;
+  }
+}
+
+/**
+ * Beregn beste skostørrelse med smart interpolering
+ * 
+ * Logikk:
+ * 1. Bruk brukerens fotlengde (27.0cm)
+ * 2. Legg til 0.2cm buffer hvis varen er "liten"
+ * 3. Finn størrelsen med minste absolutte forskjell til målet
+ * 4. Støtter mellomstørrelser gjennom interpolering
+ */
+function calculateSmartShoeSize(
+  userFootLength: number,
+  tableShoeSizes: ShoeSize[],
+  dropdownSizes: string[],
+  fitHint: string | null
+): { size: string; footLength: number; diff: number } | null {
+  
+  console.log(`PerFit [SHOES]: Brukerens fotlengde: ${userFootLength}cm`);
+  console.log(`PerFit [SHOES]: Fit hint: ${fitHint || 'ingen'}`);
+  
+  // Legg til buffer hvis varen er liten
+  const buffer = (fitHint && fitHint.toLowerCase().includes('liten')) ? 0.2 : 0;
+  const targetFootLength = userFootLength + buffer;
+  
+  if (buffer > 0) {
+    console.log(`PerFit [SHOES]: Varen merket som 'liten', legger til ${buffer}cm buffer → mål: ${targetFootLength}cm`);
+  }
+  
+  // Bygg komplett liste med størrelser (tabell + interpolerte)
+  const allSizes: ShoeSize[] = [...tableShoeSizes];
+  
+  if (dropdownSizes.length > 0) {
+    console.log("PerFit [SHOES]: Sjekker for mellomstørrelser å interpolere...");
+    
+    dropdownSizes.forEach(dropdownSize => {
+      const cleanDropdownSize = cleanShoeSize(dropdownSize);
+      const alreadyInTable = tableShoeSizes.some(s => s.size === cleanDropdownSize);
+      
+      if (!alreadyInTable) {
+        const interpolatedLength = interpolateFootLength(cleanDropdownSize, tableShoeSizes);
+        
+        if (interpolatedLength) {
+          allSizes.push({
+            size: cleanDropdownSize,
+            footLength: interpolatedLength,
+            isInterpolated: true
+          });
+          console.log(`PerFit [SHOES]: ✨ Lagt til interpolert størrelse ${cleanDropdownSize} med fotlengde ${interpolatedLength}cm`);
+        }
+      }
+    });
+    
+    // Sorter etter størrelsesnummer
+    allSizes.sort((a, b) => {
+      const aNum = parseFloat(a.size.replace(',', '.'));
+      const bNum = parseFloat(b.size.replace(',', '.'));
+      return aNum - bNum;
+    });
+  }
+  
+  console.log(`PerFit [SHOES]: Totalt ${allSizes.length} størrelser tilgjengelig (${allSizes.filter(s => s.isInterpolated).length} interpolert)`);
+  
+  // Finn størrelsen med minste absolutte forskjell
+  let bestMatch: ShoeSize | null = null;
+  let smallestDiff = Infinity;
+  
+  for (const shoeSize of allSizes) {
+    const diff = Math.abs(shoeSize.footLength - targetFootLength);
+    console.log(`PerFit [SHOES]: Størrelse ${shoeSize.size} (${shoeSize.footLength}cm) - diff: ${diff.toFixed(2)}cm ${shoeSize.isInterpolated ? '[interpolert]' : ''}`);
+    
+    if (diff < smallestDiff) {
+      smallestDiff = diff;
+      bestMatch = shoeSize;
+    }
+  }
+  
+  if (bestMatch) {
+    console.log(`PerFit [SHOES]: ✅ Beste match - Størrelse ${bestMatch.size} (${bestMatch.footLength}cm, diff: ${smallestDiff.toFixed(2)}cm)`);
+    return {
+      size: bestMatch.size,
+      footLength: bestMatch.footLength,
+      diff: smallestDiff
+    };
+  }
+  
+  console.error("PerFit [SHOES]: Ingen match funnet");
+  return null;
+}
+
+/**
+ * Les skostørrelse-tabell fra Zalando
+ * Skraper fotlengde-data og bruker smart matchingslogikk
+ */
+async function readShoeTableData() {
+  console.log("PerFit [SHOES]: Begynner å lese skostørrelse-tabellen...");
+
+  try {
+    // 1. Finn skostørrelse-tabell (ser etter "Fotlengde" eller "Skostørrelse")
+    const tables = document.querySelectorAll('table');
+    let shoeTable: HTMLTableElement | undefined;
+
+    for (let i = 0; i < tables.length; i++) {
+      const table = tables[i] as HTMLTableElement;
+      const tableText = table.textContent || '';
+      
+      if (tableText.includes("Fotlengde") || tableText.includes("Skostørrelse")) {
+        shoeTable = table;
+        console.log(`PerFit [SHOES]: Fant skostørrelse-tabell (tabell ${i + 1}/${tables.length})`);
+        break;
+      }
+    }
+
+    if (!shoeTable) {
+      console.error("PerFit [SHOES]: Fant ikke skostørrelse-tabell");
+      return;
+    }
+
+    // 2. Hent brukerens profil
+    if (typeof chrome === "undefined" || !chrome.storage) {
+      console.error("PerFit: Chrome API not available");
+      return;
+    }
+
+    const result = await chrome.storage.local.get(["userProfile"]);
+    
+    if (chrome.runtime.lastError) {
+      console.error("PerFit: Storage error:", chrome.runtime.lastError);
+      return;
+    }
+
+    const user = result.userProfile;
+
+    if (!user || typeof user !== "object") {
+      console.log("PerFit: Ingen profil funnet. Kan ikke sammenligne.");
+      return;
+    }
+
+    // Valider fotlengde
+    const userFootLength = user.footLength ? parseFloat(user.footLength) : null;
+    if (!userFootLength || isNaN(userFootLength) || userFootLength <= 0) {
+      console.error("PerFit [SHOES]: Ugyldig fotlengde i profil:", user.footLength);
+      return;
+    }
+
+    // 3. Les tabellhoder for å finne kolonner
+    const headerCells = shoeTable.querySelectorAll('thead th');
+    const headers: string[] = [];
+    headerCells.forEach(th => {
+      headers.push(th.textContent?.trim().toLowerCase() || '');
+    });
+
+    console.log("PerFit [SHOES]: Tabellhoder:", headers);
+
+    // Finn kolonne-indekser
+    let euSizeIndex = -1;
+    let footLengthIndex = -1;
+    let isFootLengthInMm = false;
+
+    headers.forEach((header, index) => {
+      if (header === 'eu' || header === 'eur' || header.includes('størrelse')) {
+        euSizeIndex = index;
+        console.log(`PerFit [SHOES]: Fant EU/Størrelse kolonne ved indeks ${index}`);
+      } else if (header.includes('fotlengde') || header.includes('foot length') || header.includes('cm') || header.includes('mm')) {
+        footLengthIndex = index;
+        isFootLengthInMm = header.includes('mm') || header.includes('(mm)');
+        console.log(`PerFit [SHOES]: Fant fotlengde kolonne ved indeks ${index}, enhet: ${isFootLengthInMm ? 'mm' : 'cm'}`);
+      }
+    });
+
+    if (euSizeIndex === -1 || footLengthIndex === -1) {
+      console.error("PerFit [SHOES]: Kunne ikke finne nødvendige kolonner");
+      return;
+    }
+
+    // 4. Les tabell-rader
+    const rows = shoeTable.querySelectorAll('tbody tr');
+    const tableShoeSizes: ShoeSize[] = [];
+
+    rows.forEach((row: Element, rowIndex: number) => {
+      const cells = row.querySelectorAll('td');
+      
+      if (cells.length > Math.max(euSizeIndex, footLengthIndex)) {
+        const euSizeRaw = cells[euSizeIndex].textContent?.trim() || "";
+        const euSize = cleanShoeSize(euSizeRaw);
+        
+        const footLengthRaw = cells[footLengthIndex].textContent?.trim() || "0";
+        const footLengthValue = parseFloat(footLengthRaw.replace(',', '.'));
+        
+        // Konverter til cm hvis tabellen bruker mm
+        let footLengthCm = isFootLengthInMm ? footLengthValue / 10 : footLengthValue;
+        footLengthCm = Math.round(footLengthCm * 100) / 100; // Rund til 2 desimaler
+
+        if (euSize && footLengthCm > 0) {
+          tableShoeSizes.push({
+            size: euSize,
+            footLength: footLengthCm,
+            isInterpolated: false
+          });
+          console.log(`PerFit [SHOES]: Rad ${rowIndex} - EU: ${euSize}, Fotlengde: ${footLengthCm}cm`);
+        }
+      }
+    });
+
+    console.log(`PerFit [SHOES]: Skrapte ${tableShoeSizes.length} skostørrelser fra tabell`);
+
+    if (tableShoeSizes.length === 0) {
+      console.error("PerFit [SHOES]: Ingen gyldig skostørrelse-data funnet");
+      return;
+    }
+
+    // 5. Skrap dropdown-størrelser
+    const dropdownSizes = scrapeDropdownSizes();
+
+    // 6. Hent fit hint
+    const fitHint = extractFitHint();
+
+    // 7. Beregn beste størrelse
+    const recommendation = calculateSmartShoeSize(
+      userFootLength,
+      tableShoeSizes,
+      dropdownSizes,
+      fitHint
+    );
+
+    if (!recommendation) {
+      console.error("PerFit [SHOES]: Kunne ikke beregne anbefaling");
+      return;
+    }
+
+    console.log(`PerFit [SHOES]: ✅ Anbefaling klar: Størrelse ${recommendation.size}`);
+    
+    // 8. Vis anbefalingen
+    showRecommendationOnPage(`${recommendation.size} (Fotlengde: ${recommendation.footLength}cm, Diff: ${recommendation.diff.toFixed(2)}cm)`);
+    
+  } catch (error) {
+    console.error("PerFit [SHOES]: Feil ved lesing av skostørrelse-data:", error);
+  }
 }
 
 async function readTableData() {
@@ -168,7 +555,7 @@ function showRecommendationOnPage(size: string) {
     font-family: sans-serif;
   `;
   alertBox.innerHTML = `<strong>PerFit Anbefaling:</strong> Vi tror <strong>${size}</strong> passer deg best!`;
-  document.body.appendChild(alertBox);
+  document.documentElement.appendChild(alertBox);
 }
 
 async function openSizeChart() {
@@ -209,8 +596,26 @@ async function openSizeChart() {
     await delay(2500);
     console.log("PerFit: Tabellen skal være åpen nå! Klar til å lese data.");
     
-    // Les tabelldata og vis anbefaling
-    await readTableData(); 
+    // Detekter type tabell (sko vs klær)
+    const allTables = document.querySelectorAll('table');
+    let isShoeTable = false;
+    
+    for (const table of allTables) {
+      const tableText = table.textContent || '';
+      if (tableText.includes("Fotlengde") || tableText.includes("Skostørrelse")) {
+        isShoeTable = true;
+        break;
+      }
+    }
+    
+    // Les riktig type tabelldata
+    if (isShoeTable) {
+      console.log("PerFit: Oppdaget skostørrelse-tabell");
+      await readShoeTableData();
+    } else {
+      console.log("PerFit: Oppdaget klær-tabell");
+      await readTableData();
+    }
 
   } else {
     console.error("PerFit: Kunne ikke finne 'Åpne størrelsestabell'-knappen.");
@@ -221,11 +626,9 @@ async function openSizeChart() {
   }
 }
 
-// Vent litt etter at siden lastes før vi starter, så Zalando får bygget ferdig siden sin.
-setTimeout(() => {
-  try {
-    openSizeChart();
-  } catch (error) {
-    console.error("PerFit: Kritisk feil:", error);
-  }
-}, 3000);
+// Start immediately - using documentElement prevents React hydration conflicts
+try {
+  openSizeChart();
+} catch (error) {
+  console.error("PerFit: Kritisk feil:", error);
+}

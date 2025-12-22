@@ -27,7 +27,7 @@ export const WizardStep = ({
   if (currentStep === 0) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-8 transform transition-all duration-300 hover:shadow-3xl">
+        <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-8 transform transition-all duration-300 hover:shadow-3xl min-h-[650px] flex flex-col">
           <div className="text-center mb-8">
             <div className="mb-6">
               <div className="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -42,7 +42,7 @@ export const WizardStep = ({
             </div>
           </div>
 
-          <div className="mb-8">
+          <div className="mb-8 flex-grow">
             <h2 className="text-xl font-semibold text-gray-900 mb-4 text-center">
               Choose Your Measurement System
             </h2>
@@ -74,7 +74,7 @@ export const WizardStep = ({
             </div>
           </div>
 
-          <div className="flex justify-end">
+          <div className="flex justify-end mt-auto pt-8 border-t border-gray-100">
             <button
               onClick={onNext}
               className="px-8 py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transform transition-all duration-200 hover:scale-105 active:scale-95 shadow-lg hover:shadow-xl"
@@ -87,14 +87,13 @@ export const WizardStep = ({
     );
   }
 
-  // Steps 1-7: Measurements
-  if (currentStep >= 1 && currentStep <= 7) {
+  // Steps 1-N: Measurements (dynamic based on measurementSteps.length)
+  if (currentStep >= 1 && currentStep <= measurementSteps.length) {
     const step = measurementSteps[currentStep - 1];
-    const isLastMeasurementStep = currentStep === 7;
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full p-8 transform transition-all duration-300 hover:shadow-3xl">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-[800px] p-8 transform transition-all duration-300 hover:shadow-3xl min-h-[650px] flex flex-col">
           {/* Progress bar */}
           <div className="mb-8">
             <div className="flex justify-between items-center mb-2">
@@ -113,14 +112,14 @@ export const WizardStep = ({
             </div>
           </div>
 
-          <div className="grid md:grid-cols-2 gap-8 mb-8">
+          <div className="grid md:grid-cols-2 gap-8 mb-8 flex-grow">
             {/* Left: Illustration */}
             <div className="flex items-center justify-center">
-              <div className="bg-blue-50 rounded-2xl p-8 w-full max-w-sm">
+              <div className="bg-blue-50 rounded-2xl p-4 w-full h-[300px] flex items-center justify-center">
                 <img
                   src={step.image}
                   alt={step.title}
-                  className="w-full h-auto rounded-lg"
+                  className="w-full h-full object-contain rounded-lg"
                 />
               </div>
             </div>
@@ -169,7 +168,7 @@ export const WizardStep = ({
           </div>
 
           {/* Navigation */}
-          <div className="flex justify-between pt-6 border-t border-gray-200">
+          <div className="flex justify-between pt-8 border-t border-gray-100 mt-auto">
             <button
               onClick={onBack}
               className="px-6 py-3 text-gray-700 font-semibold rounded-lg hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-gray-300 focus:ring-offset-2 transition-all duration-200"
@@ -185,7 +184,7 @@ export const WizardStep = ({
                   : "bg-gray-300 text-gray-500 cursor-not-allowed"
               }`}
             >
-              {isLastMeasurementStep ? "Continue" : "Next"}
+              Next
             </button>
           </div>
         </div>
@@ -193,11 +192,11 @@ export const WizardStep = ({
     );
   }
 
-  // Step 8: Fit Preference
-  if (currentStep === 8) {
+  // Step N+1: Fit Preference (totalSteps - 2)
+  if (currentStep === totalSteps - 2) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-8 transform transition-all duration-300 hover:shadow-3xl">
+        <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full p-8 transform transition-all duration-300 hover:shadow-3xl min-h-[650px] flex flex-col">
           {/* Progress bar */}
           <div className="mb-8">
             <div className="flex justify-between items-center mb-2">
@@ -216,7 +215,7 @@ export const WizardStep = ({
             </div>
           </div>
 
-          <div className="mb-8">
+          <div className="mb-8 flex-grow">
             <div className="text-center mb-6">
               <div className="text-5xl mb-4">👔</div>
               <h2 className="text-2xl font-bold text-gray-900 mb-3">
@@ -275,7 +274,7 @@ export const WizardStep = ({
           </div>
 
           {/* Navigation */}
-          <div className="flex justify-between pt-6 border-t border-gray-200">
+          <div className="flex justify-between pt-8 border-t border-gray-100 mt-auto">
             <button
               onClick={onBack}
               className="px-6 py-3 text-gray-700 font-semibold rounded-lg hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-gray-300 focus:ring-offset-2 transition-all duration-200"

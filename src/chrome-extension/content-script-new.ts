@@ -1,63 +1,59 @@
+// TOP-LEVEL GUARD: Exit immediately if not a product page (BEFORE any imports)
+if (!window.location.pathname.endsWith(".html") || window.location.pathname.includes("-home")) {
+  throw new Error("PerFit: Not a product page, aborting.");
+}
+
 /**
- * PerFit Content Script
+ * PerFit Content Script - Simplified Version
  * 
- * This script runs on supported e-commerce sites and provides
- * personalized size recommendations based on the user's measurements.
- * 
- * Architecture:
- * - Uses Provider pattern to support multiple stores
- * - Fetches user profile from chrome.storage.local
- * - Calculates size recommendation based on fit preference
- * - Injects UI element with recommendation
+ * Direct DOM injection without Shadow DOM complexity.
+ * Focuses on reliable dropdown scraping and size matching.
  */
 
 import { detectProvider } from '../stores';
 import { UserProfile, SizeRecommendation, GarmentCategory } from '../stores/types';
-import { calculateRecommendation } from './RecommendationEngine';
+import { calculateRecommendation, calculateTextBasedRecommendation } from './RecommendationEngine';
 
 /**
- * Inject global CSS styles for PerFit components
- * 
- * Ensures floating button logo remains circular even after re-injection.
- * Applies !important rules to override any conflicting styles.
+ * Inject UI element into isolated Shadow DOM container
+ * Uses React Root Sibling strategy to avoid hydration collisions
  */
-function injectGlobalStyles(): void {
-  // Check if styles already injected
-  if (document.getElementById('perfit-global-styles')) {
-    return;
-  }
-
-  const style = document.createElement('style');
-  style.id = 'perfit-global-styles';
-  style.textContent = `
-    /* PerFit floating button - ensure always circular */
-    #perfit-floating-btn {
-      border-radius: 50% !important;
-      display: flex !important;
-      justify-content: center !important;
-      align-items: center !important;
+const injectIsolatedUI = (element: HTMLElement, hostId: string): void => {
+  // Use requestIdleCallback to avoid collision with React startup
+  (window.requestIdleCallback || window.setTimeout)(() => {
+    let host = document.getElementById(hostId);
+    
+    if (!host) {
+      // Use custom tag name to prevent React's CSS scanners from reacting
+      host = document.createElement('perfit-root');
+      host.id = hostId;
+      
+      // CRITICAL: Find Zalando's React Root and inject as SIBLING (not child)
+      // This keeps our extension outside React's Virtual DOM tree
+      const reactRoot = document.getElementById('z-pdp-root') 
+                     || document.getElementById('app') 
+                     || document.getElementById('root')
+                     || document.body;
+      
+      if (reactRoot && reactRoot.parentNode) {
+        // Insert as sibling BEFORE the React root
+        reactRoot.parentNode.insertBefore(host, reactRoot);
+      } else {
+        // Fallback: append to documentElement if React root not found
+        document.documentElement.appendChild(host);
+      }
+      
+      const shadow = host.attachShadow({ mode: 'open' });
+      shadow.appendChild(element);
+    } else {
+      host.shadowRoot?.replaceChildren(element);
     }
-
-    /* PerFit logo image - ensure always circular with correct size */
-    #perfit-floating-btn img {
-      width: 92% !important;
-      height: 92% !important;
-      border-radius: 50% !important;
-      object-fit: cover !important;
-    }
-  `;
-
-  document.head.appendChild(style);
-  console.log('PerFit: Global styles injected');
-}
+  });
+};
 
 /**
- * Inject recommendation UI on the page
- * 
- * Creates a fixed-position box in the bottom-right corner
- * showing the recommended size.
- * 
- * @param recommendation - Size recommendation to display
+ * Show size recommendation popup
+ * Simple direct injection into document.body
  */
 function showRecommendation(recommendation: SizeRecommendation): void {
   // Remove existing recommendation if present
@@ -65,74 +61,6 @@ function showRecommendation(recommendation: SizeRecommendation): void {
   if (existingBox) {
     existingBox.remove();
   }
-
-  // Create recommendation box
-  const box = document.createElement('div');
-  box.id = 'perfit-recommendation';
-  box.style.cssText = `
-    position: fixed;
-    bottom: 20px;
-    right: 20px;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    padding: 20px 24px;
-    border-radius: 16px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-    z-index: 999999;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    max-width: 300px;
-    animation: slideIn 0.3s ease-out;
-  `;
-
-  // Create close button
-  const closeButton = document.createElement('span');
-  closeButton.id = 'perfit-close';
-  closeButton.innerHTML = '×';
-  closeButton.style.cssText = `
-    position: absolute;
-    top: 8px;
-    right: 12px;
-    font-size: 28px;
-    font-weight: bold;
-    color: white;
-    cursor: pointer;
-    opacity: 0.7;
-    transition: opacity 0.2s ease;
-    line-height: 1;
-    user-select: none;
-  `;
-  
-  // Close button hover effect
-  closeButton.addEventListener('mouseenter', () => {
-    closeButton.style.opacity = '1';
-  });
-  
-  closeButton.addEventListener('mouseleave', () => {
-    closeButton.style.opacity = '0.7';
-  });
-  
-  // Close button click handler
-  closeButton.addEventListener('click', () => {
-    box.style.transition = 'opacity 0.3s ease-out';
-    box.style.opacity = '0';
-    setTimeout(() => box.remove(), 300);
-  });
-
-  // Add slide-in animation
-  const style = document.createElement('style');
-  style.textContent = `
-    @keyframes slideIn {
-      from {
-        transform: translateX(400px);
-        opacity: 0;
-      }
-      to {
-        transform: translateX(0);
-        opacity: 1;
-      }
-    }
-  `;
-  document.head.appendChild(style);
 
   // Category emoji
   const categoryEmoji: Record<GarmentCategory, string> = {
@@ -147,327 +75,289 @@ function showRecommendation(recommendation: SizeRecommendation): void {
   let tableInfo = '';
   
   if (recommendation.category === 'top') {
-    measurementText = `Your chest: ${recommendation.userChest}cm (exact match, no buffer)`;
+    measurementText = `Your chest: ${recommendation.userChest}cm`;
     tableInfo = recommendation.matchedRow 
       ? `Table: ${recommendation.matchedRow.chest}cm chest` 
       : '';
   } else if (recommendation.category === 'bottom') {
-    measurementText = `Your waist & hip (exact match, no buffer)`;
+    measurementText = `Your waist & hip`;
     tableInfo = recommendation.matchedRow 
       ? `Table: ${recommendation.matchedRow.waist}cm waist / ${recommendation.matchedRow.hip}cm hip` 
       : '';
   } else if (recommendation.category === 'shoes') {
-    measurementText = `Your shoe size: ${recommendation.userChest}`;
-    tableInfo = '';
+    measurementText = `Your foot: ${recommendation.userChest}cm`;
+    if (recommendation.fitNote) {
+      tableInfo = `<span style="color: #48bb78; font-weight: bold;">${recommendation.fitNote}</span>`;
+    }
   } else {
     measurementText = `Your measurement: ${recommendation.userChest}cm`;
-    tableInfo = recommendation.matchedRow 
-      ? `Table: ${recommendation.matchedRow.chest}cm chest / ${recommendation.matchedRow.waist}cm waist` 
-      : '';
   }
 
+  // Create recommendation box - simple inline styles
+  const box = document.createElement('div');
+  box.id = 'perfit-recommendation';
+  box.style.cssText = `
+    position: fixed !important;
+    bottom: 20px !important;
+    right: 20px !important;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+    color: white !important;
+    padding: 20px 24px !important;
+    border-radius: 16px !important;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3) !important;
+    z-index: 999999 !important;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+    max-width: 300px !important;
+    animation: slideIn 0.3s ease-out !important;
+    pointer-events: auto !important;
+  `;
+
   box.innerHTML = `
+    <style>
+      @keyframes slideIn {
+        from { transform: translateX(400px); opacity: 0; }
+        to { transform: translateX(0); opacity: 1; }
+      }
+    </style>
+    <span id="perfit-close" style="position: absolute; top: 8px; right: 12px; font-size: 28px; font-weight: bold; color: white; cursor: pointer; opacity: 0.7; line-height: 1; user-select: none;">×</span>
     <div style="text-align: center; padding: 10px 0;">
-      <div style="font-size: 48px; font-weight: bold; line-height: 1; margin-bottom: 8px; text-shadow: 0 2px 8px rgba(0,0,0,0.3);">
+      <div style="font-size: 48px; font-weight: bold; margin-bottom: 8px; text-shadow: 0 2px 8px rgba(0,0,0,0.3);">
         ${recommendation.size}
       </div>
       <div style="font-size: 16px; font-weight: bold; letter-spacing: 1.5px; margin-bottom: 16px; opacity: 0.95;">
-         PerFit Match
+        ⭐ PerFit Match
       </div>
       <div style="font-size: 13px; opacity: 0.9; line-height: 1.5; margin-top: 12px;">
         ${categoryEmoji[recommendation.category]} ${measurementText}
       </div>
       ${tableInfo ? `
-        <div style="font-size: 11px; opacity: 0.75; margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.3); font-family: monospace;">
+        <div style="font-size: 11px; opacity: 0.85; margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.3);">
           ${tableInfo}
         </div>
       ` : ''}
     </div>
   `;
 
-  // Append close button to the box
-  box.appendChild(closeButton);
+  // Close button handler
+  const closeButton = box.querySelector('#perfit-close');
+  if (closeButton) {
+    closeButton.addEventListener('click', () => {
+      box.style.transition = 'opacity 0.3s ease-out';
+      box.style.opacity = '0';
+      setTimeout(() => box.remove(), 300);
+    });
+  }
 
-  document.body.appendChild(box);
+  // Inject using requestIdleCallback to avoid React collision
+  injectIsolatedUI(box, 'perfit-recommendation-host');
 
   // Auto-hide after 15 seconds
   setTimeout(() => {
-    box.style.transition = 'opacity 0.5s ease-out';
-    box.style.opacity = '0';
-    setTimeout(() => box.remove(), 500);
+    if (box.parentNode) {
+      box.style.transition = 'opacity 0.5s ease-out';
+      box.style.opacity = '0';
+      setTimeout(() => box.remove(), 500);
+    }
   }, 15000);
-
-  // Restore floating button after showing recommendation
-  injectFloatingButton();
 }
 
 /**
- * Main execution function for running PerFit size recommendation
- * 
- * Flow:
- * 1. Detect store provider
- * 2. Fetch user profile from storage
- * 3. Open size guide
- * 4. Scrape size data
- * 5. Calculate recommendation
- * 6. Highlight recommended row
- * 7. Display recommendation popup
- * 
- * @param triggeredByButton - Whether this was triggered by the floating button (affects UI feedback)
+ * Main execution function - Runs size recommendation logic
  */
-async function runPerFit(triggeredByButton: boolean = false): Promise<void> {
+async function runPerFit(): Promise<void> {
   try {
-    console.log("PerFit: Content script initialized");
+    console.log("PerFit: Running recommendation...");
 
-    // Step 1: Detect store provider
     const provider = detectProvider();
     if (!provider) {
-      console.log("PerFit: This page is not supported. Provider detection failed.");
+      console.log("PerFit: Provider not detected");
+      removeActionMenu();
       return;
     }
 
-    console.log(`PerFit: Active provider: ${provider.name}`);
-
-    // Step 2: Fetch user profile
-    if (typeof chrome === "undefined" || !chrome.storage) {
-      console.error("PerFit: Chrome API not available");
-      return;
-    }
-
+    // Fetch user profile
     const result = await chrome.storage.local.get(["userProfile"]);
-    
-    if (chrome.runtime.lastError) {
-      console.error("PerFit: Storage error:", chrome.runtime.lastError);
-      return;
-    }
-
     const userProfile: UserProfile = result.userProfile;
 
-    if (!userProfile || typeof userProfile !== "object") {
-      console.log("PerFit: No user profile found. Please set up your measurements in the extension options.");
+    if (!userProfile) {
+      console.log("PerFit: No user profile found");
+      removeActionMenu();
       return;
     }
 
-    if (!userProfile.chest || isNaN(parseInt(userProfile.chest))) {
-      console.error("PerFit: Invalid chest measurement in profile");
-      return;
-    }
+    console.log("PerFit: User profile loaded");
 
-    console.log("PerFit: User profile loaded successfully");
-
-    // Step 3: Open size guide
+    // Open size guide
     const opened = await provider.openSizeGuide();
     if (!opened) {
       console.error("PerFit: Failed to open size guide");
+      removeActionMenu();
       return;
     }
-
-    // Step 4: Scrape size data
-    const sizeData = provider.scrapeTableData();
+    // Get fit hint early (needed for text-based fallback)
+    let fitHint: string | undefined;
+    if ('getFitHint' in provider && typeof provider.getFitHint === 'function') {
+      fitHint = (provider as any).getFitHint() || undefined;
+    }
+    // Scrape size data
+    const sizeData = await provider.scrapeTableData();
     if (sizeData.length === 0) {
-      console.error("PerFit: No size data found in table");
+      console.log("PerFit: No table data found, checking for text-based measurements...");
+      
+      // Check if provider has text measurements (Zalando-specific)
+      if ('textMeasurement' in provider && (provider as any).textMeasurement) {
+        const textData = (provider as any).textMeasurement;
+        console.log("PerFit: Using text-based measurements", textData);
+        
+        // Calculate text-based recommendation
+        const recommendation = calculateTextBasedRecommendation(userProfile, textData);
+        
+        if (recommendation) {
+          removeActionMenu(); // Remove menu before showing recommendation
+          showRecommendation(recommendation);
+          return;
+        }
+      }
+      
+      console.error("PerFit: No size data or text measurements available");
+      removeActionMenu();
       return;
     }
 
-    // Step 4.5: Detect garment category
+    // Detect category
     const category = provider.getTableCategory();
-    console.log(`PerFit: Detected garment category: ${category}`);
+    console.log(`PerFit: Category: ${category}`);
 
-    // Step 5: Calculate recommendation
-    const recommendation = calculateRecommendation(userProfile, sizeData, category);
+    // Calculate recommendation
+    const recommendation = calculateRecommendation(userProfile, sizeData, category, fitHint);
     if (!recommendation) {
       console.error("PerFit: Failed to calculate recommendation");
+      removeActionMenu();
       return;
     }
 
-    // Step 6: Highlight the recommended size in the table
+    // Highlight row
     if (recommendation.matchedRow && recommendation.matchedRow.rowIndex !== undefined) {
-      provider.highlightRow(recommendation.matchedRow.rowIndex);
-    } else {
-      console.warn("PerFit: No matched row or rowIndex found, skipping highlighting");
+      provider.highlightRow(recommendation.matchedRow.rowIndex, recommendation.fitNote);
     }
 
-    // Step 7: Display recommendation popup
-    console.log(`PerFit: ✅ Recommendation ready: ${recommendation.size}`);
+    // Show recommendation
+    console.log(`PerFit: ✅ Recommendation: ${recommendation.size}`);
+    removeActionMenu(); // Remove menu before showing recommendation
     showRecommendation(recommendation);
 
-    // If triggered by button, show success feedback
-    if (triggeredByButton) {
-      updateFloatingButton('success');
-    }
-
   } catch (error) {
-    console.error("PerFit: Critical error in main execution:", error);
-    
-    // Show error feedback if triggered by button
-    if (triggeredByButton) {
-      updateFloatingButton('error');
-    }
+    console.error("PerFit: Error:", error);
+    removeActionMenu(); // Always clean up on error
   }
 }
 
 /**
- * Inject floating PerFit button on the page
- * 
- * Creates a fixed-position circular button on the right side
- * that triggers the PerFit recommendation when clicked.
+ * Remove the action menu from DOM
  */
-function injectFloatingButton(): void {
-  // Check if button already exists
-  if (document.getElementById('perfit-floating-btn')) {
-    return;
+function removeActionMenu(): void {
+  const host = document.getElementById('perfit-action-host');
+  if (host) {
+    host.remove();
+    console.log("PerFit: Action menu removed");
   }
+}
 
-  // Create button
-  const button = document.createElement('button');
-  button.id = 'perfit-floating-btn';
-  button.setAttribute('aria-label', 'Get PerFit size recommendation');
+/**
+ * Show action menu popup - Simplified design
+ */
+function showActionMenu(): void {
+  const hostId = 'perfit-action-host';
+  let host = document.getElementById(hostId);
   
-  // Get extension icon URL
-  const iconUrl = chrome.runtime.getURL('logo.png');
-  
-  // Create image element
-  const img = document.createElement('img');
-  img.src = iconUrl;
-  img.alt = 'PerFit';
-  
-  // Append image to button (styling handled by global CSS)
-  button.appendChild(img);
-  
-  button.style.cssText = `
-    position: fixed;
-    right: 20px;
-    top: 50%;
-    transform: translateY(-50%);
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    border: none;
-    border-radius: 50%;
-    width: 50px;
-    height: 50px;
-    cursor: pointer;
-    box-shadow: 0 4px 20px rgba(118, 75, 162, 0.4);
-    z-index: 999998;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.3s ease;
-    padding: 0;
-  `;
-
-  // Add hover effect
-  button.addEventListener('mouseenter', () => {
-    button.style.transform = 'translateY(-50%) scale(1.05)';
-    button.style.boxShadow = '0 6px 28px rgba(118, 75, 162, 0.6)';
-  });
-
-  button.addEventListener('mouseleave', () => {
-    button.style.transform = 'translateY(-50%) scale(1)';
-    button.style.boxShadow = '0 4px 20px rgba(118, 75, 162, 0.4)';
-  });
-
-  // Add click handler
-  button.addEventListener('click', async () => {
-    console.log("PerFit: Floating button clicked");
+  if (!host) {
+    host = document.createElement('perfit-root');
+    host.id = hostId;
     
-    // Show loading state
-    button.disabled = true;
-    button.innerHTML = `
-      <div style="width: 24px; height: 24px; border: 3px solid rgba(255,255,255,0.3); border-top-color: white; border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
-    `;
-    
-    // Add spinner animation
-    if (!document.getElementById('perfit-spinner-style')) {
-      const spinnerStyle = document.createElement('style');
-      spinnerStyle.id = 'perfit-spinner-style';
-      spinnerStyle.textContent = `
-        @keyframes spin {
-          to { transform: rotate(360deg); }
-        }
-      `;
-      document.head.appendChild(spinnerStyle);
+    // Sibling Injection: Finn React-roten og legg oss ved siden av
+    const reactRoot = document.getElementById('z-pdp-root') || document.body.firstElementChild;
+    if (reactRoot && reactRoot.parentNode) {
+      reactRoot.parentNode.insertBefore(host, reactRoot);
+    } else {
+      document.body.prepend(host);
     }
 
-    // Run PerFit
-    await runPerFit(true);
-  });
-
-  // Append to body
-  document.body.appendChild(button);
-  console.log("PerFit: Floating button injected");
-}
-
-/**
- * Update floating button state after recommendation
- * 
- * @param state - 'success' or 'error'
- */
-function updateFloatingButton(state: 'success' | 'error'): void {
-  const button = document.getElementById('perfit-floating-btn') as HTMLButtonElement;
-  if (!button) return;
-
-  if (state === 'success') {
-    button.innerHTML = `
-      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" fill="white"/>
-      </svg>
+    const shadow = host.attachShadow({ mode: 'open' });
+    const menu = document.createElement('div');
+    
+    // Styling basert på bildene dine
+    menu.style.cssText = `
+      position: fixed; top: 20px; right: 20px;
+      background: white; padding: 24px; border-radius: 16px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+      width: 300px; z-index: 2147483647; font-family: sans-serif;
+      text-align: center; display: flex; flex-direction: column; gap: 16px;
     `;
-    button.style.background = 'linear-gradient(135deg, #48bb78 0%, #38a169 100%)';
-  } else {
-    button.innerHTML = `
-      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" fill="white"/>
-      </svg>
+
+    menu.innerHTML = `
+      <div style="font-size: 24px; font-weight: bold; color: #111827;">PerFit</div>
+      
+      <button id="perfit-run" style="
+        background: #10b981; color: white; border: none;
+        padding: 16px; border-radius: 50px; width: 100%;
+        font-size: 18px; font-weight: bold; cursor: pointer;
+        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+      ">Measure size</button>
+
+      <div id="perfit-edit" style="
+        color: #6b7280; font-size: 14px; cursor: pointer;
+        text-decoration: underline; margin-top: 4px;
+      ">Change your measurements</div>
     `;
-    button.style.background = 'linear-gradient(135deg, #f56565 0%, #e53e3e 100%)';
-  }
 
-  // Reset button after 3 seconds
-  setTimeout(() => {
-    const iconUrl = chrome.runtime.getURL('logo.png');
-    button.disabled = false;
-    button.innerHTML = `
-      <img src="${iconUrl}" alt="PerFit" style="width: 28px; height: 28px; display: block;" />
-    `;
-    button.style.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
-  }, 3000);
-}
+    shadow.appendChild(menu);
 
-/**
- * Initialize content script
- * 
- * Injects the floating button immediately when the page loads.
- * The button can be clicked at any time to trigger the recommendation.
- */
-function initialize(): void {
-  try {
-    console.log("PerFit: Initializing content script...");
-    
-    // Inject global styles first
-    injectGlobalStyles();
-    
-    // Detect if we're on a supported page
-    const provider = detectProvider();
-    if (!provider) {
-      console.log("PerFit: This page is not supported. Skipping button injection.");
-      return;
-    }
+    // Knappe-logikk
+    shadow.getElementById('perfit-run')?.addEventListener('click', async () => {
+      const button = shadow.getElementById('perfit-run') as HTMLButtonElement;
+      if (button) {
+        // Show loading state
+        button.disabled = true;
+        button.style.opacity = '0.6';
+        button.style.cursor = 'not-allowed';
+        button.innerHTML = `
+          <div style="display: flex; align-items: center; justify-content: center; gap: 8px;">
+            <div style="
+              width: 16px; height: 16px; border: 2px solid white;
+              border-top-color: transparent; border-radius: 50%;
+              animation: spin 0.8s linear infinite;
+            "></div>
+            <span>Loading...</span>
+          </div>
+          <style>
+            @keyframes spin {
+              to { transform: rotate(360deg); }
+            }
+          </style>
+        `;
+      }
+      
+      // Run the recommendation logic
+      await runPerFit();
+    });
 
-    console.log(`PerFit: Detected ${provider.name}. Injecting floating button...`);
-    
-    // Inject the floating button immediately
-    injectFloatingButton();
-    
-  } catch (error) {
-    console.error("PerFit: Failed to initialize:", error);
+    shadow.getElementById('perfit-edit')?.addEventListener('click', () => {
+      chrome.runtime.openOptionsPage();
+    });
   }
 }
 
 /**
- * Wait for DOM to be ready, then initialize
+ * Click-to-Run Entry Point
+ * Runs immediately when injected by background service worker
  */
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', initialize);
+
+// NUCLEAR GUARD: Tillater alle sider som ender på .html, så lenge det ikke er en kategoriside
+const path = window.location.pathname.toLowerCase();
+const isProduct = path.endsWith(".html") && !path.includes("-home");
+
+if (!isProduct) {
+  console.log("PerFit: Not a product page, stopping.");
 } else {
-  initialize();
+  showActionMenu();
 }

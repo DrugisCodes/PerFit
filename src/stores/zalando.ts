@@ -1,105 +1,263 @@
 /**
  * Zalando Store Provider
  * 
- * Implements the StoreProvider interface for Zalando.no
- * Handles size guide automation and table scraping for Zalando.
+ * Implements Zalando-specific integration.
+ * Generic table scraping logic is in BaseStoreProvider.
  */
 
-import { StoreProvider, SizeRow } from './types';
-
-/**
- * Helper function to wait/delay execution
- */
-const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+import { SizeRow } from './types';
+import { BaseStoreProvider } from './BaseStoreProvider';
+import { delay, findElementByText } from '../utils/dom';
 
 /**
- * Find DOM elements by text content using XPath
- * This is more robust than class-based selectors that can change
+ * Text-based measurement data (fallback when tables are missing)
  */
-function findElementByText(tag: string, text: string): HTMLElement | null {
-  const xpath = `//${tag}[contains(text(), '${text}')]`;
-  const result = document.evaluate(
-    xpath,
-    document,
-    null,
-    XPathResult.FIRST_ORDERED_NODE_TYPE,
-    null
-  );
-  return result.singleNodeValue as HTMLElement;
+interface TextMeasurement {
+  modelHeight?: number;      // Model's height in cm (e.g., 189)
+  modelSize: string;         // Size the model is wearing (e.g., "M")
+  itemLength?: number;       // Item length in cm (e.g., 69)
+  itemLengthSize?: string;   // Size for which length is specified (e.g., "M")
 }
 
 /**
  * ZalandoProvider - Handles Zalando.no integration
  */
-export class ZalandoProvider implements StoreProvider {
+export class ZalandoProvider extends BaseStoreProvider {
   name = "Zalando";
-  private activeTable: HTMLTableElement | null = null;
+  private fitHint: string | null = null;
+  public textMeasurement: TextMeasurement | null = null;
+
+  /**
+   * Extract fit hint from Zalando page
+   * Looks for text like "Varen er liten" or "Varen er stor"
+   */
+  private extractFitHint(): string | null {
+    try {
+      // Look for fit hint in the "Passform" section
+      const passformSection = document.body.textContent || '';
+      
+      if (passformSection.includes('Varen er liten') || passformSection.includes('liten i størrelsen')) {
+        console.log("PerFit [Zalando]: Fit hint detected - Item runs SMALL");
+        return 'liten';
+      }
+      
+      if (passformSection.includes('Varen er stor') || passformSection.includes('stor i størrelsen')) {
+        console.log("PerFit [Zalando]: Fit hint detected - Item runs LARGE");
+        return 'stor';
+      }
+      
+      console.log("PerFit [Zalando]: No specific fit hint found (true to size assumed)");
+      return null;
+    } catch (error) {
+      console.error("PerFit [Zalando]: Error extracting fit hint:", error);
+      return null;
+    }
+  }
+
+  /**
+   * Scrape text-based measurements from 'Passform' section
+   * Fallback when size tables are not available
+   */
+  private scrapeTextMeasurements(): TextMeasurement | null {
+    try {
+      console.log("PerFit [Zalando]: Attempting text-based measurement extraction...");
+      
+      // Find Passform accordion section
+      const passformSection = document.querySelector('[data-testid="pdp-accordion-passform"]');
+      if (!passformSection) {
+        console.warn("PerFit [Zalando]: Could not find 'Passform' section");
+        return null;
+      }
+      
+      const text = passformSection.textContent || '';
+      console.log("PerFit [Zalando]: Passform text:", text.substring(0, 200));
+      
+      const measurement: Partial<TextMeasurement> = { modelSize: '' };
+      
+      // Extract model height: "Modellen er 189 cm"
+      const heightMatch = text.match(/Modellen er (\d+)\s*cm/i);
+      if (heightMatch) {
+        measurement.modelHeight = parseInt(heightMatch[1]);
+        console.log(`PerFit [Zalando]: Found model height: ${measurement.modelHeight}cm`);
+      }
+      
+      // Extract model size: "har på seg størrelse M"
+      const sizeMatch = text.match(/størrelse\s+([A-Z0-9]+)/i);
+      if (sizeMatch) {
+        measurement.modelSize = sizeMatch[1];
+        console.log(`PerFit [Zalando]: Found model size: ${measurement.modelSize}`);
+      }
+      
+      // Extract item length: "Totallengde: 69 cm i størrelse M"
+      const lengthMatch = text.match(/Totallengde[:\s]+(\d+)\s*cm\s+i\s+størrelse\s+([A-Z0-9]+)/i);
+      if (lengthMatch) {
+        measurement.itemLength = parseInt(lengthMatch[1]);
+        measurement.itemLengthSize = lengthMatch[2];
+        console.log(`PerFit [Zalando]: Found item length: ${measurement.itemLength}cm in size ${measurement.itemLengthSize}`);
+      }
+      
+      if (!measurement.modelSize) {
+        console.warn("PerFit [Zalando]: Could not extract model size from text");
+        return null;
+      }
+      
+      return measurement as TextMeasurement;
+    } catch (error) {
+      console.error("PerFit [Zalando]: Error scraping text measurements:", error);
+      return null;
+    }
+  }
+
+  /**
+   * Scrape all available sizes from Zalando's size selector dropdown
+   * Simplified - just click, wait, scrape
+   */
+  private async scrapeDropdownSizes(): Promise<string[]> {
+    const trigger = document.querySelector('[data-testid="pdp-size-picker-trigger"]') as HTMLElement;
+    if (!trigger) {
+      console.warn("PerFit [Zalando]: Could not find size picker trigger");
+      return [];
+    }
+
+    try {
+      console.log("PerFit [Zalando]: Scraping dropdown sizes...");
+      
+      // Check if menu is already open to avoid double-toggle
+      const isExpanded = trigger.getAttribute('aria-expanded') === 'true';
+      if (!isExpanded) {
+        console.log("PerFit [Zalando]: Opening dropdown...");
+        trigger.click();
+      }
+      
+      // Polling: Check every 100ms for up to 2 seconds for React portal to appear
+      const sizes = await new Promise<string[]>((resolve) => {
+        let attempts = 0;
+        const maxAttempts = 20; // 20 * 100ms = 2000ms
+        
+        const interval = setInterval(() => {
+          // Search broadly for both test-id and ARIA roles
+          const items = document.querySelectorAll('[data-testid="pdp-size-item"], [role="option"]');
+          
+          if (items.length > 0 || attempts >= maxAttempts) {
+            clearInterval(interval);
+            
+            if (items.length > 0) {
+              console.log(`PerFit [Zalando]: Found ${items.length} size options after ${(attempts + 1) * 100}ms`);
+            } else {
+              console.warn("PerFit [Zalando]: No size options found after polling");
+            }
+            
+            const found = Array.from(items)
+              .map(el => {
+                const text = el.textContent?.trim() || "";
+                // Extract size like "42", "42 2/3", "43 1/3"
+                const match = text.match(/^(\d+(?:\s+\d+\/\d+)?)/);
+                return match ? match[1] : text;
+              })
+              .filter(t => t && /^\d+/.test(t) && !t.includes('Varsle') && !t.includes('påminnelse'));
+            
+            resolve(found);
+          }
+          attempts++;
+        }, 100);
+      });
+      
+      console.log(`PerFit [Zalando]: Extracted sizes:`, sizes);
+
+      // Close dropdown if we opened it
+      if (!isExpanded) {
+        trigger.click();
+        await delay(200);
+      }
+
+      // Return unique sizes (deduplicate)
+      return Array.from(new Set(sizes));
+    } catch (error) {
+      console.error("PerFit [Zalando]: Error scraping dropdown sizes:", error);
+      return [];
+    }
+  }
+
+  /**
+   * Get fit hint for current product (Zalando-specific)
+   */
+  getFitHint(): string | null {
+    if (this.fitHint === null) {
+      this.fitHint = this.extractFitHint();
+    }
+    return this.fitHint;
+  }
 
   /**
    * Check if current page is a Zalando product page
    */
   canHandle(): boolean {
-    const hostname = window.location.hostname;
-    const pathname = window.location.pathname;
+    const url = window.location.href.toLowerCase();
+    const path = window.location.pathname.toLowerCase();
     
-    // Match zalando domains and product page pattern (.html extension)
-    return (
-      (hostname.includes('zalando.no') || hostname.includes('zalando.com')) &&
-      pathname.endsWith('.html')
-    );
+    // Sjekker om vi er på Zalando
+    const isZalando = url.includes("zalando.no") || url.includes("zalando.com");
+    
+    // Sjekker om det faktisk er en vare:
+    // 1. Må ende på .html
+    // 2. Må ikke være forsiden (-home)
+    // 3. Må ikke være en ren kategoriside (/herre, /dame, /barn)
+    const isProductPage = path.endsWith(".html") && 
+                          !path.includes("-home") && 
+                          path.length > 20; // Produktsider har som regel lange navn
+
+    return isZalando && isProductPage;
   }
 
   /**
-   * Open Zalando's size guide
-   * 
-   * Steps:
-   * 1. Find and click "Passform" accordion button
-   * 2. Wait for accordion to expand
-   * 3. Find and click "Åpne størrelsestabell" button
-   * 4. Wait for modal to open
+   * Open Zalando's size guide - Simplified
    */
   async openSizeGuide(): Promise<boolean> {
     try {
-      console.log("PerFit [Zalando]: Attempting to open size guide...");
+      console.log("PerFit [Zalando]: Opening size guide...");
 
-      // --- STEP 1: Find and click "Passform" ---
+      // Find "Passform" button
       const passformSpan = findElementByText("span", "Passform");
-
       if (!passformSpan) {
         console.error("PerFit [Zalando]: Could not find 'Passform' button");
         return false;
       }
 
-      // Click the button (or closest clickable parent)
       const passformButton = passformSpan.closest("button") || passformSpan;
-      
-      // Check if already expanded
       const isExpanded = passformButton.getAttribute('aria-expanded') === 'true';
       
       if (!isExpanded) {
-        console.log("PerFit [Zalando]: Clicking 'Passform' to expand accordion...");
+        console.log("PerFit [Zalando]: Clicking 'Passform'...");
         (passformButton as HTMLElement).click();
-        await delay(1500); // Wait for accordion animation
-      } else {
-        console.log("PerFit [Zalando]: 'Passform' already expanded");
+        await delay(1000);
       }
 
-      // --- STEP 2: Find and click "Åpne størrelsestabell" ---
-      const openTableSpan = findElementByText("span", "Åpne størrelsestabell");
-
+      // Find "Åpne størrelsestabell" button with fallbacks
+      let openTableSpan = findElementByText("span", "Åpne størrelsestabell");
+      
+      // Fallback 1: Try "størrelsesguide"
       if (!openTableSpan) {
-        console.error("PerFit [Zalando]: Could not find 'Åpne størrelsestabell' button");
+        console.log("PerFit [Zalando]: Trying fallback 'størrelsesguide'...");
+        openTableSpan = findElementByText("span", "størrelsesguide");
+      }
+      
+      // Fallback 2: Try just "tabell"
+      if (!openTableSpan) {
+        console.log("PerFit [Zalando]: Trying fallback 'tabell'...");
+        openTableSpan = findElementByText("span", "tabell");
+      }
+      
+      if (!openTableSpan) {
+        console.error("PerFit [Zalando]: Could not find size guide button (tried: 'Åpne størrelsestabell', 'størrelsesguide', 'tabell')");
         return false;
       }
 
-      console.log("PerFit [Zalando]: Clicking 'Åpne størrelsestabell' to open modal...");
+      console.log("PerFit [Zalando]: Found size guide button, clicking...");
       const openTableButton = openTableSpan.closest("button") || openTableSpan;
       (openTableButton as HTMLElement).click();
 
-      // Wait for modal to open and render
-      await delay(2500);
-
-      console.log("PerFit [Zalando]: Size guide should now be open!");
+      await delay(1500);
+      console.log("PerFit [Zalando]: Size guide opened");
       return true;
 
     } catch (error) {
@@ -109,83 +267,68 @@ export class ZalandoProvider implements StoreProvider {
   }
 
   /**
-   * Detect garment category based on table headers
+   * Scrape size data from Zalando's size table
    * 
-   * @param headers - Array of header text content
-   * @returns Category type: 'top' | 'bottom' | 'shoes' | 'unknown'
-   */
-  detectCategory(headers: string[]): 'top' | 'bottom' | 'shoes' | 'unknown' {
-    const h = headers.join(' ').toLowerCase();
-    
-    // Shoes: Look for foot length or shoe size
-    if (h.includes('fotlengde') || h.includes('skostørrelse') || h.includes('foot length')) {
-      return 'shoes';
-    }
-    
-    // Bottoms: Look for inseam or waist-dominant measurements
-    if (h.includes('innerbenslengde') || h.includes('inseam') || 
-        (h.includes('midjevidde') && !h.includes('brystvidde'))) {
-      return 'bottom';
-    }
-    
-    // Tops: Look for chest measurements
-    if (h.includes('brystvidde') || h.includes('chest') || h.includes('bust')) {
-      return 'top';
-    }
-    
-    return 'unknown';
-  }
-
-  /**
-   * Get category from the active table
-   */
-  getTableCategory(): 'top' | 'bottom' | 'shoes' | 'unknown' {
-    if (!this.activeTable) return 'unknown';
-    
-    const headers = Array.from(this.activeTable.querySelectorAll('thead th'))
-      .map(th => th.textContent?.trim() || '');
-    
-    return this.detectCategory(headers);
-  }
-
-  /**
-   * Scrape size data from Zalando's "Kroppsmål" table
-   * 
-   * Zalando typically has multiple tables:
+   * Zalando-specific logic for finding the right table:
    * - Table 1: Garment measurements (Plaggets mål)
-   * - Table 2: Body measurements (Kroppsmål) ← We want this one
-   * 
-   * Table structure varies by garment type:
-   * Tops:    | EU | INT | Brystvidde | Midjevidde | Hoftemål |
-   * Bottoms: | EU | INT | Midjevidde | Hoftemål | Innerbenslengde |
+   * - Table 2: Body measurements (Kroppsmål) ← We want this one for clothing
+   * - Shoe table: Size conversion table with EU, UK, US, Fotlengde
    */
-  scrapeTableData(): SizeRow[] {
+  async scrapeTableData(): Promise<SizeRow[]> {
     try {
-      console.log("PerFit [Zalando]: Starting to scrape 'Kroppsmål' table...");
+      console.log("PerFit [Zalando]: Starting to scrape size table...");
 
       // Find all tables on the page
       const tables = document.querySelectorAll('table');
       let bodyMeasureTable: HTMLTableElement | undefined;
+      let detectedCategory: 'top' | 'bottom' | 'shoes' | 'unknown' = 'unknown';
 
-      // Find the table that contains "Kroppsmål" (body measurements)
+      // For shoes, prioritize tables with "Fotlengde" or "Skostørrelse"
+      // For clothing, look for "Kroppsmål"
       for (let i = 0; i < tables.length; i++) {
         const table = tables[i] as HTMLTableElement;
-        if (table.textContent?.includes("Kroppsmål")) {
+        const tableText = table.textContent || '';
+        
+        // Check if this is a shoe table
+        if (tableText.includes("Fotlengde") || tableText.includes("Skostørrelse")) {
           bodyMeasureTable = table;
-          this.activeTable = table; // Store reference for highlighting
-          console.log(`PerFit [Zalando]: Found 'Kroppsmål' table (table ${i + 1}/${tables.length})`);
-          
-          // Log detected category
-          const category = this.getTableCategory();
-          console.log(`PerFit [Zalando]: Detected category: ${category}`);
+          this.activeTable = table;
+          detectedCategory = 'shoes';
+          console.log(`PerFit [Zalando]: Found shoe size table (table ${i + 1}/${tables.length})`);
           break;
+        }
+        
+        // Check if this is a clothing body measurements table
+        if (tableText.includes("Kroppsmål")) {
+          bodyMeasureTable = table;
+          this.activeTable = table;
+          console.log(`PerFit [Zalando]: Found 'Kroppsmål' table (table ${i + 1}/${tables.length})`);
+          // Don't break yet - keep looking for shoe tables
         }
       }
 
       if (!bodyMeasureTable) {
-        console.error("PerFit [Zalando]: Could not find 'Kroppsmål' table");
+        console.warn("PerFit [Zalando]: No size table found, trying text-based extraction...");
+        const textData = this.scrapeTextMeasurements();
+        
+        if (textData) {
+          // Store text data for recommendation engine
+          this.textMeasurement = textData;
+          console.log("PerFit [Zalando]: ✅ Text-based measurements extracted successfully");
+          // Return empty array to signal text-based mode to recommendation engine
+          return [];
+        }
+        
+        console.error("PerFit [Zalando]: Could not find size table or extract text measurements");
         return [];
       }
+
+      // If we didn't detect shoes from table content, check headers
+      if (detectedCategory !== 'shoes') {
+        detectedCategory = this.getTableCategory();
+      }
+      
+      console.log(`PerFit [Zalando]: Detected category: ${detectedCategory}`);
 
       // Dynamically identify column indices by reading headers
       const headerCells = bodyMeasureTable.querySelectorAll('thead th');
@@ -196,167 +339,20 @@ export class ZalandoProvider implements StoreProvider {
 
       console.log("PerFit [Zalando]: Table headers:", headers);
 
-      // Find column indices (case-insensitive)
-      let intSizeIndex = -1;
-      let chestIndex = -1;
-      let waistIndex = -1;
-      let hipIndex = -1;
-
-      headers.forEach((header, index) => {
-        // INT size column (S, M, L, XL, etc.)
-        if (header === 'int' || header.includes('størrelse')) {
-          intSizeIndex = index;
-        }
-        // Chest column
-        else if (header.includes('brystvidde') || header.includes('chest') || header.includes('bust')) {
-          chestIndex = index;
-        }
-        // Waist column (multiple possible names)
-        else if (header.includes('midjevidde') || header.includes('livvidde') || header.includes('waist')) {
-          waistIndex = index;
-        }
-        // Hip column (multiple possible names)
-        else if (header.includes('hoftemål') || header.includes('hoftevidde') || 
-                 header.includes('setevidde') || header.includes('hip')) {
-          hipIndex = index;
-        }
-      });
-
-      console.log(`PerFit [Zalando]: Column mapping - INT:${intSizeIndex}, Chest:${chestIndex}, Waist:${waistIndex}, Hip:${hipIndex}`);
-
-      // Validate that we found the essential columns
-      if (intSizeIndex === -1) {
-        console.error("PerFit [Zalando]: Could not find INT size column");
-        return [];
+      // Use base class scraping methods
+      if (detectedCategory === 'shoes') {
+        // Get dropdown sizes for interpolation (now async)
+        const dropdownSizes = await this.scrapeDropdownSizes();
+        return this.scrapeShoeSizeTable(bodyMeasureTable, headers, dropdownSizes);
       }
 
-      // Parse table rows
-      const rows = bodyMeasureTable.querySelectorAll('tbody tr');
-      const sizeData: SizeRow[] = [];
-
-      rows.forEach((row: Element, rowIndex: number) => {
-        const cells = row.querySelectorAll('td');
-        
-        if (cells.length > intSizeIndex) {
-          const intSize = cells[intSizeIndex].textContent?.trim() || "";
-          
-          // Extract measurements (default to 0 if column not found)
-          const chestValue = chestIndex !== -1 ? 
-            parseInt(cells[chestIndex].textContent?.trim() || "0") : 0;
-          const waistValue = waistIndex !== -1 ? 
-            parseInt(cells[waistIndex].textContent?.trim() || "0") : 0;
-          const hipValue = hipIndex !== -1 ? 
-            parseInt(cells[hipIndex].textContent?.trim() || "0") : 0;
-
-          // Validation: Check if hip is suspiciously smaller than waist
-          if (hipValue > 0 && waistValue > 0 && hipValue < waistValue - 10) {
-            console.warn(`PerFit [Zalando]: Row ${rowIndex} - Hip (${hipValue}cm) is significantly smaller than waist (${waistValue}cm). Possible column misalignment!`);
-          }
-
-          // For bottoms (no chest measurement), we need at least waist
-          // For tops, we need at least chest
-          const hasValidData = (chestValue > 0) || (waistValue > 0);
-
-          if (intSize && hasValidData) {
-            sizeData.push({
-              intSize,
-              chest: chestValue,
-              waist: waistValue,
-              hip: hipValue,
-              rowIndex: rowIndex
-            });
-          }
-        }
-      });
-
-      console.log(`PerFit [Zalando]: Scraped ${sizeData.length} size entries:`, sizeData);
-
-      // Additional validation: Check first entry for sanity
-      if (sizeData.length > 0) {
-        const first = sizeData[0];
-        if (first.hip > 0 && first.waist > 0 && first.hip < first.waist - 10) {
-          console.warn("PerFit [Zalando]: ⚠️ WARNING - Hip measurements appear smaller than waist across the table. Column headers may be incorrectly mapped!");
-        }
-      }
-
-      if (sizeData.length === 0) {
-        console.warn("PerFit [Zalando]: No valid size data found in table");
-      }
-
-      return sizeData;
+      // For clothing, use base class method
+      return this.scrapeClothingSizeTable(bodyMeasureTable, headers);
 
     } catch (error) {
       console.error("PerFit [Zalando]: Error scraping table data:", error);
       return [];
     }
-  }
-
-  /**
-   * Highlight recommended size row in Zalando's size table
-   * 
-   * Adds visual styling to the recommended size:
-   * - Light purple background
-   * - Purple left border
-   * - "PerFit Match" badge
-   * - Smooth scroll to row
-   * 
-   * @param rowIndex - The index of the row to highlight
-   */
-  highlightRow(rowIndex: number): void {
-    if (!this.activeTable) {
-      console.warn("PerFit [Zalando]: No active table to highlight");
-      return;
-    }
-
-    console.log(`PerFit [Zalando]: Highlighting row index ${rowIndex} in table...`);
-
-    const rows = this.activeTable.querySelectorAll('tbody tr');
-    
-    if (rowIndex < 0 || rowIndex >= rows.length) {
-      console.warn(`PerFit [Zalando]: Invalid row index ${rowIndex}. Table has ${rows.length} rows.`);
-      return;
-    }
-
-    // Remove highlighting from all rows first
-    rows.forEach((row) => {
-      (row as HTMLElement).style.backgroundColor = "";
-      (row as HTMLElement).style.borderLeft = "";
-    });
-
-    // Highlight the specific row
-    const targetRow = rows[rowIndex] as HTMLElement;
-    const cells = targetRow.querySelectorAll('td');
-
-    // Apply styling
-    targetRow.style.backgroundColor = "rgba(124, 58, 237, 0.2)"; // Light purple
-    targetRow.style.borderLeft = "6px solid #7c3aed"; // Purple border (6px as requested)
-    targetRow.style.transition = "all 0.3s ease";
-    
-    // Scroll to the highlighted row
-    targetRow.scrollIntoView({ 
-      behavior: 'smooth', 
-      block: 'center' 
-    });
-    
-    // Add "PerFit Match" badge if not already present
-    if (cells.length > 1) {
-      const existingBadge = cells[1].querySelector('.perfit-badge');
-      if (!existingBadge) {
-        const badge = document.createElement('div');
-        badge.className = 'perfit-badge';
-        badge.textContent = " PERFIT MATCH";
-        badge.style.cssText = `
-          font-size: 9px; 
-          color: #7c3aed; 
-          font-weight: bold; 
-          margin-top: 2px;
-          letter-spacing: 0.5px;
-        `;
-        cells[1].appendChild(badge);
-      }
-    }
-
-    console.log(`PerFit [Zalando]: Successfully highlighted row ${rowIndex}`);
   }
 }
 

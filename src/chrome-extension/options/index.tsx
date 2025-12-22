@@ -22,6 +22,8 @@ const Options = () => {
     inseam: "",
     torsoLength: "",
     shoeSize: "",
+    height: "",
+    footLength: "",
     fitPreference: 5,
   });
   const [savedData, setSavedData] = useState<WizardData | null>(null);
@@ -61,6 +63,8 @@ const Options = () => {
               inseam: String(loadedProfile.inseam || ""),
               torsoLength: String(loadedProfile.torsoLength || ""),
               shoeSize: String(loadedProfile.shoeSize || ""),
+              height: String(loadedProfile.height || ""),
+              footLength: String(loadedProfile.footLength || ""),
               fitPreference: typeof loadedProfile.fitPreference === "number" && loadedProfile.fitPreference >= 1 && loadedProfile.fitPreference <= 10
                 ? loadedProfile.fitPreference
                 : 5

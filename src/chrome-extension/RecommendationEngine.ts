@@ -6,6 +6,7 @@
  */
 
 import { SizeRow, UserProfile, SizeRecommendation, GarmentCategory } from '../stores/types';
+import { parseSizeToNumber } from '../utils/math';
 
 /**
  * Calculate buffer (extra cm) to add based on fit preference
@@ -47,17 +48,19 @@ import { SizeRow, UserProfile, SizeRecommendation, GarmentCategory } from '../st
  * Algorithm (using exact measurements, no buffer):
  * - Tops: Match user chest against table's BRYSTVIDDE (chest) column
  * - Bottoms: Match BOTH user waist AND hip - size must accommodate both measurements
- * - Shoes: Direct shoe size match
+ * - Shoes: Smart foot length matching with optional fit hint buffer
  * 
  * @param userProfile - User's body measurements and preferences
  * @param sizeData - Array of size data from the store's size table
  * @param category - Type of garment (top, bottom, shoes)
+ * @param fitHint - Optional fit hint from store (e.g., "Varen er liten")
  * @returns Size recommendation object or null if no match found
  */
 export function calculateRecommendation(
   userProfile: UserProfile,
   sizeData: SizeRow[],
-  category: GarmentCategory
+  category: GarmentCategory,
+  fitHint?: string
 ): SizeRecommendation | null {
   try {
     // Validate inputs
@@ -79,7 +82,7 @@ export function calculateRecommendation(
     } else if (category === 'bottom') {
       return calculateBottomRecommendation(userProfile, sizeData);
     } else if (category === 'shoes') {
-      return calculateShoeRecommendation(userProfile);
+      return calculateShoeRecommendation(userProfile, sizeData, fitHint);
     } else {
       return calculateUnknownCategoryRecommendation(userProfile, sizeData);
     }
@@ -183,26 +186,160 @@ function calculateBottomRecommendation(
  * Calculate recommendation for shoes
  * Direct shoe size match, no buffer needed
  */
+/**
+ * Calculate recommendation for shoes with smart interpolation
+ * 
+ * New features:
+ * 1. Uses foot length for precise matching
+ * 2. Applies 0.2cm buffer if item is marked as "small"
+ * 3. Finds best match using absolute smallest difference
+ * 4. Supports intermediate sizes through interpolation
+ * 
+ * Priority order:
+ * 1. Foot length matching (most accurate)
+ * 2. EU size exact match (if foot length not available)
+ * 3. EU size numeric match with tolerance
+ */
 function calculateShoeRecommendation(
-  userProfile: UserProfile
+  userProfile: UserProfile,
+  sizeData: SizeRow[],
+  fitHint?: string
 ): SizeRecommendation | null {
-  const shoeSize = parseFloat(userProfile.shoeSize);
+  const userShoeSize = userProfile.shoeSize.trim();
+  const userFootLength = userProfile.footLength ? parseFloat(userProfile.footLength) : null;
   
-  if (isNaN(shoeSize) || shoeSize <= 0) {
-    console.error("PerFit: Invalid shoe size:", userProfile.shoeSize);
+  if (!userShoeSize && !userFootLength) {
+    console.error("PerFit: No shoe size or foot length provided in user profile");
     return null;
   }
 
-  console.log(`PerFit [SHOES]: Looking for shoe size ${shoeSize}`);
+  console.log(`PerFit [SHOES]: User shoe size: ${userShoeSize}, foot length: ${userFootLength}cm`);
+  console.log(`PerFit [SHOES]: Fit hint: ${fitHint || 'none'}`);
+  console.log(`PerFit [SHOES]: Available sizes in table: ${sizeData.length}`);
+  console.log("PerFit [SHOES]: Table data:", sizeData.map(row => `${row.intSize} (${row.footLength}cm)`));
   
-  return {
-    size: userProfile.shoeSize,
-    confidence: 0.8,
-    category: 'shoes',
-    userChest: shoeSize,
-    targetChest: shoeSize,
-    buffer: 0
-  };
+  // PRIORITY 1: Foot length matching (most accurate)
+  if (userFootLength && sizeData.some(row => row.footLength !== undefined && row.footLength > 0)) {
+    console.log(`PerFit [SHOES]: Using foot length matching (${userFootLength}cm)...`);
+    
+    // Apply buffer if item is small
+    const buffer = (fitHint && fitHint.toLowerCase().includes('liten')) ? 0.2 : 0;
+    const targetFootLength = userFootLength + buffer;
+    
+    if (buffer > 0) {
+      console.log(`PerFit [SHOES]: Item marked as 'small', adding ${buffer}cm buffer → target: ${targetFootLength}cm`);
+    }
+    
+    // Find size with smallest absolute difference to target foot length
+    let bestMatch: SizeRow | null = null;
+    let smallestDiff = Infinity;
+    
+    for (const row of sizeData) {
+      if (row.footLength !== undefined && row.footLength > 0) {
+        const diff = Math.abs(row.footLength - targetFootLength);
+        console.log(`PerFit [SHOES]: Size ${row.intSize} (${row.footLength}cm) - diff: ${diff.toFixed(2)}cm`);
+        
+        if (diff < smallestDiff) {
+          smallestDiff = diff;
+          bestMatch = row;
+        }
+      }
+    }
+    
+    if (bestMatch !== null) {
+      console.log(`PerFit [SHOES]: ✅ Best foot length match - Size ${bestMatch.intSize} (${bestMatch.footLength}cm, diff: ${smallestDiff.toFixed(2)}cm)`);
+      
+      // Calculate fit difference and category for user education
+      const diff = bestMatch.footLength! - userFootLength;
+      let fitCategory: string;
+      
+      if (diff < 0.4) {
+        fitCategory = "TETTSITTENDE";
+      } else if (diff <= 0.9) {
+        fitCategory = "IDEELL";
+      } else {
+        fitCategory = "ROMSLIG";
+      }
+      
+      const fitNote = `${fitCategory} (+${diff.toFixed(1)} cm plass)`;
+      console.log(`PerFit [SHOES]: Fit note: ${fitNote}`);
+      
+      return {
+        size: bestMatch.intSize,
+        confidence: 0.95,
+        category: 'shoes',
+        userChest: userFootLength,
+        targetChest: bestMatch.footLength || 0,
+        buffer: buffer,
+        matchedRow: bestMatch,
+        fitNote: fitNote
+      };
+    } else {
+      console.warn(`PerFit [SHOES]: No valid foot length data in table. Falling back to EU size matching.`);
+    }
+  }
+  
+  // PRIORITY 2: EU size exact match (if foot length not available)
+  if (userShoeSize) {
+    console.log(`PerFit [SHOES]: Trying EU size exact match for "${userShoeSize}"...`);
+    const exactMatch = sizeData.find(row => {
+      const tableSize = row.intSize.trim();
+      const userSize = userShoeSize.trim();
+      
+      // Direct string match (handles "43 1/3" === "43 1/3")
+      if (tableSize === userSize) {
+        return true;
+      }
+      
+      // Numeric match with decimal conversion
+      const tableNum = parseSizeToNumber(tableSize);
+      const userNum = parseSizeToNumber(userSize);
+      return Math.abs(tableNum - userNum) < 0.01; // Allow tiny rounding error
+    });
+
+    if (exactMatch) {
+      console.log(`PerFit [SHOES]: ✅ Exact EU size match: ${exactMatch.intSize}`);
+      return {
+        size: exactMatch.intSize,
+        confidence: 1.0,
+        category: 'shoes',
+        userChest: parseSizeToNumber(userShoeSize),
+        targetChest: parseSizeToNumber(exactMatch.intSize),
+        buffer: 0,
+        matchedRow: exactMatch
+      };
+    }
+    
+    // PRIORITY 3: Numeric comparison with tolerance (handles half sizes)
+    console.log("PerFit [SHOES]: Trying numeric comparison with 0.5 tolerance...");
+    const userSizeNum = parseSizeToNumber(userShoeSize);
+    if (!isNaN(userSizeNum)) {
+      const numericMatch = sizeData.find(row => {
+        const tableNum = parseSizeToNumber(row.intSize);
+        const diff = Math.abs(tableNum - userSizeNum);
+        if (diff < 0.5) {
+          console.log(`PerFit [SHOES]: Checking ${row.intSize} (${tableNum}) vs ${userShoeSize} (${userSizeNum}) - diff: ${diff}`);
+        }
+        return !isNaN(tableNum) && diff < 0.5;
+      });
+      
+      if (numericMatch) {
+        console.log(`PerFit [SHOES]: ✅ Numeric match: ${numericMatch.intSize}`);
+        return {
+          size: numericMatch.intSize,
+          confidence: 0.85,
+          category: 'shoes',
+          userChest: userSizeNum,
+          targetChest: parseSizeToNumber(numericMatch.intSize),
+          buffer: 0,
+          matchedRow: numericMatch
+        };
+      }
+    }
+  }
+  
+  console.error(`PerFit [SHOES]: No match found for shoe size ${userShoeSize} or foot length ${userFootLength}cm`);
+  return null;
 }
 
 /**
@@ -238,4 +375,76 @@ function calculateUnknownCategoryRecommendation(
   }
 
   return null;
+}
+
+/**
+ * Calculate recommendation based on text measurements (when tables are missing)
+ * 
+ * Logic:
+ * - Compare user height with model height
+ * - Assuming ~6cm height difference ≈ 1 size difference
+ * - Apply fit preference adjustment
+ * 
+ * Example: Model is 189cm wearing size M, user is 175cm (14cm shorter)
+ * → -14cm / 6 = -2.33 → Recommend S (2 sizes down from M)
+ * → If user prefers loose fit, adjust to M
+ */
+export function calculateTextBasedRecommendation(
+  userProfile: UserProfile,
+  textData: { modelHeight?: number; modelSize: string; itemLength?: number; itemLengthSize?: string }
+): SizeRecommendation | null {
+  try {
+    const userHeight = parseInt(userProfile.height);
+    
+    if (!textData.modelHeight || isNaN(userHeight) || userHeight <= 0) {
+      console.warn("PerFit [Text]: Insufficient data for text-based recommendation");
+      console.log(`PerFit [Text]: User height: ${userHeight}, Model height: ${textData.modelHeight}`);
+      return null;
+    }
+    
+    console.log(`PerFit [Text]: User height: ${userHeight}cm, Model height: ${textData.modelHeight}cm wearing size ${textData.modelSize}`);
+    
+    const heightDiff = userHeight - textData.modelHeight;
+    const sizeScale = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL'];
+    const modelSizeIndex = sizeScale.indexOf(textData.modelSize.toUpperCase());
+    
+    if (modelSizeIndex === -1) {
+      console.warn(`PerFit [Text]: Unknown model size: ${textData.modelSize}`);
+      return null;
+    }
+    
+    // Heuristic: ~6cm height difference ≈ 1 size difference
+    const sizeDiff = Math.round(heightDiff / 6);
+    let recommendedIndex = modelSizeIndex + sizeDiff;
+    
+    // Apply fit preference adjustment
+    const fitPreference = userProfile.fitPreference || 5;
+    if (fitPreference <= 3) {
+      recommendedIndex -= 1; // Tight fit: go down a size
+      console.log(`PerFit [Text]: Tight fit preference (${fitPreference}) - going down 1 size`);
+    } else if (fitPreference >= 7) {
+      recommendedIndex += 1; // Loose fit: go up a size
+      console.log(`PerFit [Text]: Loose fit preference (${fitPreference}) - going up 1 size`);
+    }
+    
+    // Clamp to valid range
+    recommendedIndex = Math.max(0, Math.min(sizeScale.length - 1, recommendedIndex));
+    
+    const recommendedSize = sizeScale[recommendedIndex];
+    
+    console.log(`PerFit [Text]: ✅ Recommended size ${recommendedSize} (height diff: ${heightDiff}cm, size diff: ${sizeDiff}, fit pref: ${fitPreference})`);
+    
+    return {
+      size: recommendedSize,
+      confidence: 0.7, // Lower confidence for text-based
+      category: 'top',
+      userChest: userHeight, // Using height as proxy
+      targetChest: userHeight,
+      buffer: 0,
+      fitNote: 'Basert på modellens mål' // "Based on model's measurements"
+    };
+  } catch (error) {
+    console.error("PerFit [Text]: Error calculating text-based recommendation:", error);
+    return null;
+  }
 }

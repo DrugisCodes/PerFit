@@ -12,6 +12,8 @@ export interface ProfileData {
   inseam: string;
   torsoLength: string;
   shoeSize: string;
+  height: string;
+  footLength: string;
   fitPreference: number;
 }
 

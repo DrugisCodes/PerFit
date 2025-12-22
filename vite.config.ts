@@ -28,11 +28,12 @@ export default defineConfig({
         popup: resolve(__dirname, "popup.html"),
         options: resolve(__dirname, "options.html"),
         "content-script": resolve(__dirname, "src/chrome-extension/content-script-new.ts"),
+        background: resolve(__dirname, "src/chrome-extension/background.ts"),
       },
       output: {
         entryFileNames: (chunkInfo) => {
-          // Content script should not have hash in filename
-          if (chunkInfo.name === "content-script") {
+          // Content script and background worker should not have hash in filename
+          if (chunkInfo.name === "content-script" || chunkInfo.name === "background") {
             return "[name].js";
           }
           return "[name].js";

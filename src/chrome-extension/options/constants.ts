@@ -60,9 +60,27 @@ export const getMeasurementSteps = (unit: "metric" | "imperial", shoeSizeLabel: 
     image: "/images/torso.png",
   },
   {
+    field: "height",
+    title: "Height (Høyde)",
+    description: "Your total height in centimeters. Used for text-based size matching when tables are unavailable.",
+    placeholder: unit === "metric" ? "e.g., 175" : "e.g., 69",
+    icon: "📏",
+    emoji: "📏",
+    image: "/images/height.png",
+  },
+  {
+    field: "footLength",
+    title: "Foot Length",
+    description: "Measure from your heel to your longest toe.",
+    placeholder: unit === "metric" ? "e.g., 27.0" : "e.g., 10.6",
+    icon: "📏",
+    emoji: "📏",
+    image: "",
+  },
+  {
     field: "shoeSize",
-    title: "Shoe Size",
-    description: `Enter your shoe size in ${shoeSizeLabel} sizing.`,
+    title: "Shoe Size (Optional)",
+    description: `Your usual shoe size in ${shoeSizeLabel} sizing.`,
     placeholder: unit === "metric" ? "e.g., 42" : "e.g., 9",
     icon: "👟",
     emoji: "👟",
@@ -77,6 +95,8 @@ export const measurementImages: Record<MeasurementField, string> = {
   armLength: "/images/armLengde.png",
   inseam: "/images/inseam.png",
   torsoLength: "/images/torso.png",
+  height: "/images/height.png",
   shoeSize: "", // No image for shoe size
+  footLength: "", // No image for foot length
   fitPreference: "", // No image for fit preference
 };

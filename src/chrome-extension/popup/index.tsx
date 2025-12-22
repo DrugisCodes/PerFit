@@ -15,7 +15,6 @@ interface ProfileData {
 export const Popup = () => {
   const [profile, setProfile] = useState<ProfileData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (typeof chrome !== "undefined" && chrome.storage) {
@@ -23,7 +22,6 @@ export const Popup = () => {
         chrome.storage.local.get(["userProfile"], (result) => {
           if (chrome.runtime.lastError) {
             console.error("PerFit Popup: Chrome storage error:", chrome.runtime.lastError);
-            setError("Failed to load profile");
             setIsLoading(false);
             return;
           }
@@ -46,7 +44,6 @@ export const Popup = () => {
         });
       } catch (err) {
         console.error("PerFit Popup: Error loading profile:", err);
-        setError("An error occurred");
         setIsLoading(false);
       }
     } else {
@@ -65,25 +62,6 @@ export const Popup = () => {
     return (
       <div className="w-[350px] h-fit bg-white">
         <div className="text-gray-600 text-center font-medium p-6">Loading...</div>
-      </div>
-    );
-  }
-
-  // Error state
-  if (error) {
-    return (
-      <div className="w-[350px] h-fit bg-white">
-        <div className="bg-red-50 rounded-xl shadow-lg p-5 text-center m-3 border border-red-200">
-          <div className="text-red-600 text-4xl mb-3">⚠️</div>
-          <h2 className="text-lg font-bold text-red-800 mb-2">Error</h2>
-          <p className="text-sm text-red-600 mb-4">{error}</p>
-          <button
-            onClick={handleOpenOptions}
-            className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-          >
-            Try Again
-          </button>
-        </div>
       </div>
     );
   }
@@ -132,7 +110,7 @@ export const Popup = () => {
           onClick={handleOpenOptions}
           className="w-full py-2 bg-gray-100 text-gray-700 font-medium rounded-lg hover:bg-gray-200 transition-all text-xs"
         >
-          Gå til Options for å se målene
+          Trykk for å se endre målene
         </button>
       </div>
     </div>
