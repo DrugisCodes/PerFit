@@ -25,8 +25,14 @@ export const Popup = () => {
         const currentTab = tabs[0];
         if (currentTab && currentTab.url) {
           const url = currentTab.url.toLowerCase();
-          const isZalando = url.includes("zalando") && url.endsWith(".html") && !url.includes("-home");
-          setIsZalandoPage(isZalando);
+          try {
+            const urlObj = new URL(url);
+            const pathname = urlObj.pathname;
+            const isZalando = url.includes("zalando") && pathname.includes(".html") && !pathname.includes("-home");
+            setIsZalandoPage(isZalando);
+          } catch {
+            setIsZalandoPage(false);
+          }
         }
       });
     }

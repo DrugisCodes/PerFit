@@ -13,10 +13,18 @@ function isProductPage(url: string | undefined): boolean {
   if (!url) return false;
   const urlLower = url.toLowerCase();
   
-  return urlLower.includes("zalando") && 
-         urlLower.endsWith(".html") && 
-         !urlLower.includes("-home") &&
-         !urlLower.includes("/klaer");
+  // Parse URL to check pathname
+  try {
+    const urlObj = new URL(urlLower);
+    const pathname = urlObj.pathname;
+    
+    return urlLower.includes("zalando") && 
+           pathname.includes(".html") && 
+           !pathname.includes("-home") &&
+           !pathname.includes("/klaer");
+  } catch {
+    return false;
+  }
 }
 
 /**

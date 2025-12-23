@@ -1,5 +1,6 @@
 // TOP-LEVEL GUARD: Exit immediately if not a product page (BEFORE any imports)
-if (!window.location.pathname.endsWith(".html") || window.location.pathname.includes("-home")) {
+const pathname = window.location.pathname.toLowerCase();
+if ((!pathname.includes(".html") && !pathname.includes("/p/")) || pathname.includes("-home")) {
   throw new Error("PerFit: Not a product page, aborting.");
 }
 
@@ -153,6 +154,9 @@ function showRecommendation(recommendation: SizeRecommendation): void {
     tableInfo = recommendation.matchedRow 
       ? `Table: ${recommendation.matchedRow.waist}cm waist / ${recommendation.matchedRow.hip}cm hip` 
       : '';
+    if (recommendation.fitNote) {
+      tableInfo += `<br><span style="color: #48bb78; font-weight: bold;">${recommendation.fitNote}</span>`;
+    }
   } else if (recommendation.category === 'shoes') {
     measurementText = `Your foot: ${recommendation.userChest}cm`;
     if (recommendation.fitNote) {
@@ -321,18 +325,27 @@ async function runPerFit(): Promise<void> {
     const category = provider.getTableCategory();
     console.log(`PerFit: Category: ${category}`);
 
-    // Calculate recommendation
-    const recommendation = calculateRecommendation(userProfile, sizeData, category, fitHint);
+    // Get text measurements if available (for ankle length detection)
+    const textMeasurement = ('textMeasurement' in provider && (provider as any).textMeasurement) 
+      ? (provider as any).textMeasurement 
+      : undefined;
+
+    // Get dropdown sizes if available (for WxL format detection)
+    const dropdownSizes = ('dropdownSizes' in provider && (provider as any).dropdownSizes) 
+      ? (provider as any).dropdownSizes 
+      : undefined;
+
+    // Calculate recommendation (pass textMeasurement for ankle length detection and dropdownSizes for WxL format)
+    const recommendation = calculateRecommendation(userProfile, sizeData, category, fitHint, textMeasurement, dropdownSizes);
     if (!recommendation) {
       console.error("PerFit: Failed to calculate recommendation");
       removeActionMenu();
       return;
     }
 
-    // Add length/height analysis (check if provider has text measurements)
-    if ('textMeasurement' in provider && (provider as any).textMeasurement) {
-      const textData = (provider as any).textMeasurement;
-      const lengthWarning = analyzeLengthFit(userProfile, textData, recommendation.size);
+    // Add length/height analysis (check if provider has text measurements and category is not shoes)
+    if (category !== 'shoes' && textMeasurement) {
+      const lengthWarning = analyzeLengthFit(userProfile, textMeasurement, recommendation.size);
       if (lengthWarning) {
         recommendation.lengthNote = lengthWarning;
         console.log("PerFit: Length warning added:", lengthWarning);
@@ -341,7 +354,59 @@ async function runPerFit(): Promise<void> {
 
     // Highlight row
     if (recommendation.matchedRow && recommendation.matchedRow.rowIndex !== undefined) {
-      provider.highlightRow(recommendation.matchedRow.rowIndex, recommendation.fitNote);
+      let rowIndexToHighlight = recommendation.matchedRow.rowIndex;
+      
+      // If rowIndex is -1 (no exact match, interpolated size), find nearest row in ORIGINAL table
+      if (rowIndexToHighlight === -1 && sizeData.length > 0) {
+        console.log("PerFit: No exact match found (interpolated size), finding nearest row in original table for size:", recommendation.size);
+        
+        // Extract numeric value from recommended size (e.g., "43 1/3" -> 43.333)
+        const recommendedValue = parseFloat(recommendation.size.replace(/\s+\d+\/\d+/, (match: string) => {
+          const parts = match.trim().split(/\s+/);
+          if (parts.length > 1) {
+            const fraction = parts[1].split('/');
+            return ' ' + (parseInt(fraction[0]) / parseInt(fraction[1])).toString();
+          }
+          return match;
+        }));
+        
+        // Find row with closest size value that has a VALID rowIndex (from original table)
+        // Filter out interpolated rows (they might have rowIndex -1 or invalid indices)
+        let minDiff = Infinity;
+        let nearestRowIndex = -1;
+        let nearestRowSize = '';
+        
+        sizeData.forEach((row) => {
+          // Only consider rows that exist in the original table (rowIndex >= 0)
+          if (row.rowIndex >= 0 && row.intSize) {
+            const rowValue = parseFloat(row.intSize.replace(/\s+\d+\/\d+/, (match: string) => {
+              const parts = match.trim().split(/\s+/);
+              if (parts.length > 1) {
+                const fraction = parts[1].split('/');
+                return ' ' + (parseInt(fraction[0]) / parseInt(fraction[1])).toString();
+              }
+              return match;
+            }));
+            
+            const diff = Math.abs(rowValue - recommendedValue);
+            if (diff < minDiff) {
+              minDiff = diff;
+              nearestRowIndex = row.rowIndex;
+              nearestRowSize = row.intSize;
+            }
+          }
+        });
+        
+        if (nearestRowIndex >= 0) {
+          console.log(`PerFit: Found nearest original table row at index ${nearestRowIndex} (size: ${nearestRowSize})`);
+          rowIndexToHighlight = nearestRowIndex;
+        }
+      }
+      
+      // Only highlight if we have a valid index
+      if (rowIndexToHighlight >= 0) {
+        provider.highlightRow(rowIndexToHighlight, recommendation.fitNote);
+      }
     }
 
     // Cache the recommendation for Resume State
@@ -700,12 +765,12 @@ function setMenuOpening(): void {
   isOpeningMenu = true;
   setTimeout(() => {
     isOpeningMenu = false;
-  }, 100); // Small delay to prevent immediate closure
+  }, 300); // Increased from 100ms to 300ms to prevent immediate closure
 }
 
-// NUCLEAR GUARD: Tillater alle sider som ender på .html, så lenge det ikke er en kategoriside
+// NUCLEAR GUARD: Tillater produktsider (.html eller /p/) så lenge det ikke er en kategoriside
 const path = window.location.pathname.toLowerCase();
-const isProduct = path.endsWith(".html") && !path.includes("-home");
+const isProduct = (path.includes(".html") || path.includes("/p/")) && !path.includes("-home");
 
 if (!isProduct) {
   console.log("PerFit: Not a product page, stopping.");

@@ -6,7 +6,14 @@
  */
 
 import { SizeRow, UserProfile, SizeRecommendation, GarmentCategory } from '../stores/types';
-import { parseSizeToNumber } from '../utils/math';
+
+/**
+ * Convert centimeters to inches (for WxL format)
+ * Rounds to nearest whole number
+ */
+function cmToInches(cm: number): number {
+  return Math.round(cm / 2.54);
+}
 
 /**
  * Calculate buffer (extra cm) to add based on fit preference
@@ -60,7 +67,9 @@ export function calculateRecommendation(
   userProfile: UserProfile,
   sizeData: SizeRow[],
   category: GarmentCategory,
-  fitHint?: string
+  fitHint?: string,
+  textMeasurement?: { isAnkleLength?: boolean },
+  dropdownSizes?: string[]
 ): SizeRecommendation | null {
   try {
     // Validate inputs
@@ -80,7 +89,7 @@ export function calculateRecommendation(
     if (category === 'top') {
       return calculateTopRecommendation(userProfile, sizeData);
     } else if (category === 'bottom') {
-      return calculateBottomRecommendation(userProfile, sizeData);
+      return calculateBottomRecommendation(userProfile, sizeData, textMeasurement, dropdownSizes, fitHint);
     } else if (category === 'shoes') {
       return calculateShoeRecommendation(userProfile, sizeData, fitHint);
     } else {
@@ -133,13 +142,19 @@ function calculateTopRecommendation(
 /**
  * Calculate recommendation for bottoms (pants, jeans, skirts)
  * Matches BOTH user waist AND hip - size must accommodate both measurements
+ * Also checks inseam length and provides intelligent warnings for ankle-length pants
+ * PRIORITY: If dropdown has WxL format (32x34), match waist and inseam directly
  */
 function calculateBottomRecommendation(
   userProfile: UserProfile,
-  sizeData: SizeRow[]
+  sizeData: SizeRow[],
+  textData?: { isAnkleLength?: boolean; lengthType?: string; stretch?: number },
+  dropdownSizes?: string[],
+  fitHint?: string
 ): SizeRecommendation | null {
-  const userWaist = parseInt(userProfile.waist);
-  const userHip = parseInt(userProfile.hip);
+  let userWaist = parseInt(userProfile.waist);
+  let userHip = parseInt(userProfile.hip);
+  const userInseam = userProfile.inseam ? parseInt(userProfile.inseam) : null;
 
   if (isNaN(userWaist) || userWaist <= 0) {
     console.error("PerFit: Invalid waist measurement:", userProfile.waist);
@@ -151,34 +166,164 @@ function calculateBottomRecommendation(
     return null;
   }
 
-  console.log(`PerFit [BOTTOM]: Looking for size with:`);
-  console.log(`  - Waist (LIVVIDDE) >= ${userWaist}cm`);
-  console.log(`  - Hip (HOFTEMÅL) >= ${userHip}cm`);
-  console.log(`  (Both conditions must be satisfied)`);
+  // Juster målene basert på fit hint
+  let sizeAdjustmentNote = '';
+  const originalWaist = userWaist;
+  
+  if (fitHint?.toLowerCase().includes('liten')) {
+    userWaist += 2; // Gå opp en størrelse
+    userHip += 2;
+    sizeAdjustmentNote = '✨ Vi har valgt en størrelse opp fordi varen er liten i størrelsen';
+    console.log(`PerFit [BOTTOM]: Item runs SMALL - adjusting waist from ${originalWaist}cm to ${userWaist}cm`);
+  } else if (fitHint?.toLowerCase().includes('stor')) {
+    userWaist -= 2; // Gå ned en størrelse
+    userHip -= 2;
+    sizeAdjustmentNote = '✨ Vi har valgt en størrelse ned fordi varen er stor i størrelsen';
+    console.log(`PerFit [BOTTOM]: Item runs LARGE - adjusting waist from ${originalWaist}cm to ${userWaist}cm`);
+  }
 
-  // Find first size where BOTH waist AND hip are >= user measurements
+  // 1. PRIORITET: Sjekk WxL-format i dropdown (f.eks. 32x34, 32×34, 32/34)
+  if (dropdownSizes && dropdownSizes.length > 0 && userInseam) {
+    const hasWxL = dropdownSizes.some(s => /\d+\s*[x×X/]\s*\d+/.test(s));
+    if (hasWxL) {
+      const targetW = cmToInches(userWaist);
+      const targetL = cmToInches(userInseam);
+      
+      console.log(`PerFit [BOTTOM WxL]: Søker etter ${targetW}x${targetL} (fra ${userWaist}cm midje × ${userInseam}cm innerben)`);
+      console.log(`PerFit [BOTTOM WxL]: Tilgjengelige størrelser:`, dropdownSizes);
+      
+      // Forsøk eksakt match først
+      const wxlMatch = dropdownSizes.find(s => {
+        const match = s.match(/(\d+)\s*[x×X/]\s*(\d+)/);
+        if (match) {
+          const w = parseInt(match[1]);
+          const l = parseInt(match[2]);
+          return w === targetW && l === targetL;
+        }
+        return false;
+      });
+      
+      if (wxlMatch) {
+        console.log(`PerFit [BOTTOM WxL]: ✓ Eksakt match funnet: ${wxlMatch}`);
+        let fitNote = '✨ Eksakt match på tommer (WxL)';
+        if (sizeAdjustmentNote) {
+          fitNote = sizeAdjustmentNote + ' • ' + fitNote;
+        }
+        return {
+          size: wxlMatch,
+          confidence: 1.0,
+          category: 'bottom',
+          userChest: originalWaist,
+          targetChest: userWaist,
+          buffer: 0,
+          fitNote: fitNote
+        };
+      }
+      
+      // Hvis ingen eksakt match, finn nærmeste
+      console.log(`PerFit [BOTTOM WxL]: Ingen eksakt match, søker etter nærmeste...`);
+      
+      let bestSize = '';
+      let bestWaistDiff = Infinity;
+      let bestInseamDiff = Infinity;
+      
+      dropdownSizes.forEach(s => {
+        const sizeMatch = s.match(/(\d+)\s*[x×X/]\s*(\d+)/);
+        if (sizeMatch) {
+          const w = parseInt(sizeMatch[1]);
+          const l = parseInt(sizeMatch[2]);
+          const waistDiff = Math.abs(w - targetW);
+          const inseamDiff = Math.abs(l - targetL);
+          
+          console.log(`PerFit [BOTTOM WxL]: Sjekker ${s} (W:${w}, L:${l}) - avvik: midje ${waistDiff}", innerben ${inseamDiff}"`);
+          
+          // Prioriter midje først, deretter innerben
+          if (waistDiff < bestWaistDiff || 
+              (waistDiff === bestWaistDiff && inseamDiff < bestInseamDiff)) {
+            bestSize = s;
+            bestWaistDiff = waistDiff;
+            bestInseamDiff = inseamDiff;
+          }
+        }
+      });
+      
+      // Returner nærmeste match hvis forskjellen er akseptabel (≤2 tommer i midje eller innerben)
+      if (bestSize && (bestWaistDiff <= 2 || bestInseamDiff <= 2)) {
+        console.log(`PerFit [BOTTOM WxL]: ✓ Nærmeste match funnet: ${bestSize} (midje ±${bestWaistDiff}", innerben ±${bestInseamDiff}")`);
+        
+        let fitNote = '📏 Nærmeste match i WxL-format';
+        if (bestWaistDiff > 0) {
+          fitNote += ` (midje ${bestWaistDiff}" forskjell)`;
+        }
+        if (bestInseamDiff > 0) {
+          fitNote += ` (lengde ${bestInseamDiff}" forskjell)`;
+        }
+        if (sizeAdjustmentNote) {
+          fitNote = sizeAdjustmentNote + ' • ' + fitNote;
+        }
+        
+        return {
+          size: bestSize,
+          confidence: 0.9,
+          category: 'bottom',
+          userChest: originalWaist,
+          targetChest: userWaist,
+          buffer: 0,
+          fitNote: fitNote.trim()
+        };
+      }
+      
+      console.log(`PerFit [BOTTOM WxL]: Ingen passende WxL-match funnet, faller tilbake til tabellstørrelser...`);
+    }
+  }
+
+  // 2. PRIORITET: Standard tabell-matching (INT-størrelser)
+  console.log(`PerFit [BOTTOM]: Looking for size with waist >= ${userWaist}cm and hip >= ${userHip}cm`);
+  
   for (const size of sizeData) {
     const waistFits = size.waist >= userWaist;
     const hipFits = size.hip >= userHip;
 
-    console.log(`PerFit [BOTTOM]: Checking size ${size.intSize}: waist ${size.waist}cm (${waistFits ? '✓' : '✗'}), hip ${size.hip}cm (${hipFits ? '✓' : '✗'})`);
-
     if (waistFits && hipFits) {
-      console.log(`PerFit [BOTTOM]: ✓ Match found! Size ${size.intSize} accommodates both measurements`);
+      console.log(`PerFit [BOTTOM]: ✓ Match found! Size ${size.intSize}`);
+      let fitNote = '';
+      
+      // Inseam/Lengde-logikk
+      if (userInseam && size.inseam) {
+        const diff = size.inseam - userInseam;
+        if (textData?.isAnkleLength) {
+          fitNote = '✨ Designet for å slutte ved ankelen';
+        } else if (diff < -3) {
+          fitNote = '⚠️ Denne kan bli litt kort i beina';
+        } else if (diff > 5) {
+          fitNote = '📏 Buksen er lang, men kan legges opp';
+        }
+      }
+
+      // Stretch-advarsel
+      if (textData?.stretch === 0 && size.waist === userWaist) {
+        fitNote += ' (Ingen stretch - kan føles trang)';
+      }
+
+      // Legg til size adjustment note hvis det finnes
+      if (sizeAdjustmentNote) {
+        fitNote = sizeAdjustmentNote + (fitNote ? ' • ' + fitNote : '');
+      }
+
       return {
         size: size.intSize,
         confidence: 1.0,
         category: 'bottom',
-        userChest: userWaist, // Store waist in userChest field for consistency
-        targetChest: userWaist,
+        userChest: originalWaist,
+        targetChest: size.waist,
         buffer: 0,
-        matchedRow: size
+        matchedRow: size,
+        fitNote: fitNote.trim()
       };
     }
   }
-
+  
   console.warn(`PerFit [BOTTOM]: No size found for waist ${userWaist}cm AND hip ${userHip}cm`);
-  console.warn(`PerFit [BOTTOM]: Largest available - waist: ${sizeData[sizeData.length - 1]?.waist}cm, hip: ${sizeData[sizeData.length - 1]?.hip}cm`);
   return null;
 }
 
@@ -187,193 +332,88 @@ function calculateBottomRecommendation(
  * Direct shoe size match, no buffer needed
  */
 /**
- * Calculate recommendation for shoes with smart interpolation
- * 
- * New features:
- * 1. Uses foot length for precise matching
- * 2. Applies 0.2cm buffer if item is marked as "small"
- * 3. Finds best match using absolute smallest difference
- * 4. Supports intermediate sizes through interpolation
- * 
- * Priority order:
- * 1. Foot length matching (most accurate)
- * 2. EU size exact match (if foot length not available)
- * 3. EU size numeric match with tolerance
+ * Anbefaling for sko
+ * Håndterer fotlengde, mellomstørrelser og fit-hints (liten/stor)
  */
 function calculateShoeRecommendation(
   userProfile: UserProfile,
   sizeData: SizeRow[],
   fitHint?: string
 ): SizeRecommendation | null {
-  const userShoeSize = userProfile.shoeSize.trim();
-  const userFootLength = userProfile.footLength ? parseFloat(userProfile.footLength) : null;
-  
-  if (!userShoeSize && !userFootLength) {
-    console.error("PerFit: No shoe size or foot length provided in user profile");
-    return null;
+  const userFoot = userProfile.footLength ? parseFloat(userProfile.footLength) : null;
+  if (!userFoot) return null;
+
+  console.log(`PerFit [SHOES]: User foot length: ${userFoot}cm, Fit hint: ${fitHint || 'none'}`);
+
+  // Juster mål basert på fit-hint
+  let buffer = 0;
+  let fitNote = '';
+  if (fitHint?.toLowerCase().includes('liten')) {
+    buffer = 0.2; // Gå litt opp
+  } else if (fitHint?.toLowerCase().includes('stor')) {
+    buffer = -0.3; // Gå litt ned
+    fitNote = '✨ Basert på at varen er stor, har vi gått ned en størrelse';
   }
 
-  console.log(`PerFit [SHOES]: User shoe size: ${userShoeSize}, foot length: ${userFootLength}cm`);
-  console.log(`PerFit [SHOES]: Fit hint: ${fitHint || 'none'}`);
-  console.log(`PerFit [SHOES]: Available sizes in table: ${sizeData.length}`);
-  console.log("PerFit [SHOES]: Table data:", sizeData.map(row => `${row.intSize} (${row.footLength}cm)`));
-  
-  // PRIORITY 1: Foot length matching (most accurate)
-  if (userFootLength && sizeData.some(row => row.footLength !== undefined && row.footLength > 0)) {
-    console.log(`PerFit [SHOES]: Using foot length matching (${userFootLength}cm)...`);
-    
-    // Apply buffer if item is small
-    const buffer = (fitHint && fitHint.toLowerCase().includes('liten')) ? 0.2 : 0;
-    const targetFootLength = userFootLength + buffer;
-    
-    if (buffer > 0) {
-      console.log(`PerFit [SHOES]: Item marked as 'small', adding ${buffer}cm buffer → target: ${targetFootLength}cm`);
-    }
-    
-    // Find size with smallest absolute difference to target foot length
-    let bestMatch: SizeRow | null = null;
-    let smallestDiff = Infinity;
-    
-    for (const row of sizeData) {
-      if (row.footLength !== undefined && row.footLength > 0) {
-        const diff = Math.abs(row.footLength - targetFootLength);
-        console.log(`PerFit [SHOES]: Size ${row.intSize} (${row.footLength}cm) - diff: ${diff.toFixed(2)}cm`);
-        
-        if (diff < smallestDiff) {
-          smallestDiff = diff;
-          bestMatch = row;
-        }
-      }
-    }
-    
-    if (bestMatch !== null) {
-      console.log(`PerFit [SHOES]: ✅ Best foot length match - Size ${bestMatch.intSize} (${bestMatch.footLength}cm, diff: ${smallestDiff.toFixed(2)}cm)`);
-      
-      // Calculate fit difference and category for user education
-      const diff = bestMatch.footLength! - userFootLength;
-      let fitCategory: string;
-      
-      if (diff < 0.4) {
-        fitCategory = "TETTSITTENDE";
-      } else if (diff <= 0.9) {
-        fitCategory = "IDEELL";
-      } else {
-        fitCategory = "ROMSLIG";
-      }
-      
-      const fitNote = `${fitCategory} (+${diff.toFixed(1)} cm plass)`;
-      console.log(`PerFit [SHOES]: Fit note: ${fitNote}`);
-      
-      return {
-        size: bestMatch.intSize,
-        confidence: 0.95,
-        category: 'shoes',
-        userChest: userFootLength,
-        targetChest: bestMatch.footLength || 0,
-        buffer: buffer,
-        matchedRow: bestMatch,
-        fitNote: fitNote
-      };
-    } else {
-      console.warn(`PerFit [SHOES]: No valid foot length data in table. Falling back to EU size matching.`);
-    }
-  }
-  
-  // PRIORITY 2: EU size exact match (if foot length not available)
-  if (userShoeSize) {
-    console.log(`PerFit [SHOES]: Trying EU size exact match for "${userShoeSize}"...`);
-    const exactMatch = sizeData.find(row => {
-      const tableSize = row.intSize.trim();
-      const userSize = userShoeSize.trim();
-      
-      // Direct string match (handles "43 1/3" === "43 1/3")
-      if (tableSize === userSize) {
-        return true;
-      }
-      
-      // Numeric match with decimal conversion
-      const tableNum = parseSizeToNumber(tableSize);
-      const userNum = parseSizeToNumber(userSize);
-      return Math.abs(tableNum - userNum) < 0.01; // Allow tiny rounding error
-    });
+  const target = userFoot + buffer;
+  let bestMatch: SizeRow | null = null;
+  let smallestDiff = Infinity;
 
-    if (exactMatch) {
-      console.log(`PerFit [SHOES]: ✅ Exact EU size match: ${exactMatch.intSize}`);
-      return {
-        size: exactMatch.intSize,
-        confidence: 1.0,
-        category: 'shoes',
-        userChest: parseSizeToNumber(userShoeSize),
-        targetChest: parseSizeToNumber(exactMatch.intSize),
-        buffer: 0,
-        matchedRow: exactMatch
-      };
-    }
-    
-    // PRIORITY 3: Numeric comparison with tolerance (handles half sizes)
-    console.log("PerFit [SHOES]: Trying numeric comparison with 0.5 tolerance...");
-    const userSizeNum = parseSizeToNumber(userShoeSize);
-    if (!isNaN(userSizeNum)) {
-      const numericMatch = sizeData.find(row => {
-        const tableNum = parseSizeToNumber(row.intSize);
-        const diff = Math.abs(tableNum - userSizeNum);
-        if (diff < 0.5) {
-          console.log(`PerFit [SHOES]: Checking ${row.intSize} (${tableNum}) vs ${userShoeSize} (${userSizeNum}) - diff: ${diff}`);
-        }
-        return !isNaN(tableNum) && diff < 0.5;
-      });
-      
-      if (numericMatch) {
-        console.log(`PerFit [SHOES]: ✅ Numeric match: ${numericMatch.intSize}`);
-        return {
-          size: numericMatch.intSize,
-          confidence: 0.85,
-          category: 'shoes',
-          userChest: userSizeNum,
-          targetChest: parseSizeToNumber(numericMatch.intSize),
-          buffer: 0,
-          matchedRow: numericMatch
-        };
+  for (const row of sizeData) {
+    if (row.footLength) {
+      const diff = Math.abs(row.footLength - target);
+      if (diff < smallestDiff) {
+        smallestDiff = diff;
+        bestMatch = row;
       }
     }
   }
-  
-  console.error(`PerFit [SHOES]: No match found for shoe size ${userShoeSize} or foot length ${userFootLength}cm`);
+
+  if (bestMatch) {
+    console.log(`PerFit [SHOES]: ✅ Best match - Size ${bestMatch.intSize} (${bestMatch.footLength}cm)`);
+    
+    // Hvis det ikke er en "stor" vare, gi standard passform-info
+    if (!fitNote) {
+      const actualDiff = bestMatch.footLength! - userFoot;
+      const cat = actualDiff < 0.4 ? "TETTSITTENDE" : actualDiff <= 0.9 ? "IDEELL" : "ROMSLIG";
+      fitNote = `${cat} (+${actualDiff.toFixed(1)} cm plass)`;
+    }
+
+    return {
+      size: bestMatch.intSize,
+      confidence: 0.95,
+      category: 'shoes',
+      userChest: userFoot,
+      targetChest: bestMatch.footLength || 0,
+      buffer: buffer,
+      matchedRow: bestMatch,
+      fitNote: fitNote
+    };
+  }
   return null;
 }
 
 /**
- * Calculate recommendation for unknown category
- * Defaults to chest measurement as fallback
+ * Anbefaling for ukjent kategori (fallback)
  */
 function calculateUnknownCategoryRecommendation(
   userProfile: UserProfile,
   sizeData: SizeRow[]
 ): SizeRecommendation | null {
-  console.warn("PerFit: Unknown category, defaulting to chest measurement");
-  
   const userChest = parseInt(userProfile.chest);
-  
-  if (isNaN(userChest) || userChest <= 0) {
-    console.error("PerFit: Invalid chest measurement for unknown category");
-    return null;
-  }
-
   for (const size of sizeData) {
     if (size.chest >= userChest) {
-      console.log(`PerFit [UNKNOWN]: Match found! Size ${size.intSize}`);
       return {
         size: size.intSize,
         confidence: 0.5,
         category: 'unknown',
         userChest: userChest,
-        targetChest: userChest,
+        targetChest: size.chest,
         buffer: 0,
         matchedRow: size
       };
     }
   }
-
   return null;
 }
 

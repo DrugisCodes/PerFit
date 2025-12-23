@@ -218,6 +218,7 @@ export abstract class BaseStoreProvider implements StoreProvider {
     let chestIndex = -1;
     let waistIndex = -1;
     let hipIndex = -1;
+    let inseamCol = -1;
 
     headers.forEach((header, index) => {
       const h = header.toLowerCase();
@@ -230,10 +231,12 @@ export abstract class BaseStoreProvider implements StoreProvider {
       } else if (h.includes('hoftemål') || h.includes('hoftevidde') || 
                  h.includes('setevidde') || h.includes('hip')) {
         hipIndex = index;
+      } else if (h.includes('innerbenslengde') || h.includes('inseam') || h.includes('benlengde')) {
+        inseamCol = index;
       }
     });
 
-    console.log(`PerFit [${this.name}]: Column mapping - INT:${intSizeIndex}, Chest:${chestIndex}, Waist:${waistIndex}, Hip:${hipIndex}`);
+    console.log(`PerFit [${this.name}]: Column mapping - INT:${intSizeIndex}, Chest:${chestIndex}, Waist:${waistIndex}, Hip:${hipIndex}, Inseam:${inseamCol}`);
 
     if (intSizeIndex === -1) {
       console.error(`PerFit [${this.name}]: Could not find INT size column`);
@@ -256,6 +259,8 @@ export abstract class BaseStoreProvider implements StoreProvider {
           parseInt(cells[waistIndex].textContent?.trim() || "0") : 0;
         const hipValue = hipIndex !== -1 && cells.length > hipIndex ? 
           parseInt(cells[hipIndex].textContent?.trim() || "0") : 0;
+        const inseamValue = inseamCol !== -1 && cells.length > inseamCol ? 
+          parseFloat(cells[inseamCol].textContent?.trim().replace(',', '.') || "0") : undefined;
 
         const hasValidData = (chestValue > 0) || (waistValue > 0);
 
@@ -265,6 +270,7 @@ export abstract class BaseStoreProvider implements StoreProvider {
             chest: chestValue,
             waist: waistValue,
             hip: hipValue,
+            inseam: inseamValue,
             rowIndex: rowIndex
           });
         }
@@ -280,6 +286,12 @@ export abstract class BaseStoreProvider implements StoreProvider {
    * Does not modify DOM elements directly - uses nth-child CSS selectors
    */
   highlightRow(rowIndex: number, _fitNote?: string): void {
+    // Safety check: Don't highlight if index is invalid
+    if (rowIndex < 0) {
+      console.warn(`PerFit [${this.name}]: Invalid row index: ${rowIndex}`);
+      return;
+    }
+    
     if (!this.activeTable) {
       console.warn(`PerFit [${this.name}]: No active table to highlight`);
       return;
@@ -304,8 +316,8 @@ export abstract class BaseStoreProvider implements StoreProvider {
       [class*="size-guide-modal"] table tbody tr:nth-child(${rowIndex + 1}),
       [class*="Modal"] table tbody tr:nth-child(${rowIndex + 1}),
       table tbody tr:nth-child(${rowIndex + 1}) {
-        background-color: #fef3c7 !important;
-        outline: 2px solid #f59e0b !important;
+        background-color: #ede9fe !important;
+        outline: 2px solid #7c3aed !important;
         outline-offset: -2px;
         transition: background-color 0.3s ease;
       }
@@ -321,11 +333,13 @@ export abstract class BaseStoreProvider implements StoreProvider {
     // 3. Inject into documentElement (safer than body for React apps)
     document.documentElement.appendChild(style);
     
-    // Scroll to row
+    // Scroll to row (only if it exists)
     const rows = this.activeTable.querySelectorAll('tbody tr');
     const targetRow = rows[rowIndex] as HTMLTableRowElement;
     if (targetRow) {
       targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } else {
+      console.warn(`PerFit [${this.name}]: Row ${rowIndex} not found in table`);
     }
     
     console.log(`PerFit [${this.name}]: CSS highlight injected for row ${rowIndex}`);

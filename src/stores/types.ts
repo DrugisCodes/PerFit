@@ -16,6 +16,7 @@ export interface SizeRow {
   chest: number;        // Chest measurement in cm
   waist: number;        // Waist measurement in cm
   hip: number;          // Hip measurement in cm
+  inseam?: number;      // Inseam/inner leg length in cm (for pants)
   footLength?: number;  // Foot length in cm (for shoes)
   rowIndex: number;     // Index of the row in the table (for highlighting)
 }

@@ -17,6 +17,7 @@ interface TextMeasurement {
   modelSize: string;         // Size the model is wearing (e.g., "M")
   itemLength?: number;       // Item length in cm (e.g., 69)
   itemLengthSize?: string;   // Size for which length is specified (e.g., "M")
+  isAnkleLength?: boolean;   // Whether item is designed as ankle length
 }
 
 /**
@@ -26,23 +27,45 @@ export class ZalandoProvider extends BaseStoreProvider {
   name = "Zalando";
   private fitHint: string | null = null;
   public textMeasurement: TextMeasurement | null = null;
+  public dropdownSizes: string[] = []; // Store available sizes from dropdown
 
   /**
    * Extract fit hint from Zalando page
-   * Looks for text like "Varen er liten" or "Varen er stor"
+   * Looks for text like "Varen er liten" or "Varen er stor" with flexible regex matching
    */
   private extractFitHint(): string | null {
     try {
-      // Look for fit hint in the "Passform" section
-      const passformSection = document.body.textContent || '';
+      // 1. PRIORITET: Målrettet søk i Zalando passform-elementer (klasse .HlZ_Tf)
+      const passformElements = document.querySelectorAll('.HlZ_Tf, [class*="passform"], [class*="fit-hint"]');
       
-      if (passformSection.includes('Varen er liten') || passformSection.includes('liten i størrelsen')) {
-        console.log("PerFit [Zalando]: Fit hint detected - Item runs SMALL");
+      for (const element of passformElements) {
+        const text = element.textContent?.toLowerCase() || '';
+        
+        // Fleksibel regex for å fange "liten" kombinasjoner
+        if (/(størrelsen|varen|modellen|anbefaler).*liten|liten.*(størrelsen|varen|størrelse|anbefal)/i.test(text)) {
+          console.log(`PerFit [Zalando]: ✅ Fit hint detected - Item runs SMALL`);
+          console.log(`PerFit [Zalando]: Funnet tekst: "${element.textContent?.trim()}"`);
+          return 'liten';
+        }
+        
+        // Fleksibel regex for å fange "stor" kombinasjoner
+        if (/(størrelsen|varen|modellen|anbefaler).*stor|stor.*(størrelsen|varen|størrelse|anbefal)/i.test(text)) {
+          console.log(`PerFit [Zalando]: ✅ Fit hint detected - Item runs LARGE`);
+          console.log(`PerFit [Zalando]: Funnet tekst: "${element.textContent?.trim()}"`);
+          return 'stor';
+        }
+      }
+      
+      // 2. FALLBACK: Søk i hele document.body hvis ikke funnet i målrettede elementer
+      const bodyText = document.body.textContent?.toLowerCase() || '';
+      
+      if (/(størrelsen|varen|modellen|anbefaler).*liten|liten.*(størrelsen|varen|størrelse|anbefal)/i.test(bodyText)) {
+        console.log("PerFit [Zalando]: ✅ Fit hint detected (body fallback) - Item runs SMALL");
         return 'liten';
       }
       
-      if (passformSection.includes('Varen er stor') || passformSection.includes('stor i størrelsen')) {
-        console.log("PerFit [Zalando]: Fit hint detected - Item runs LARGE");
+      if (/(størrelsen|varen|modellen|anbefaler).*stor|stor.*(størrelsen|varen|størrelse|anbefal)/i.test(bodyText)) {
+        console.log("PerFit [Zalando]: ✅ Fit hint detected (body fallback) - Item runs LARGE");
         return 'stor';
       }
       
@@ -105,7 +128,7 @@ export class ZalandoProvider extends BaseStoreProvider {
         measurement.modelHeight = parseInt(heightMatch[1]);
         console.log(`PerFit [Zalando]: ✅ Model height extracted: ${measurement.modelHeight}cm`);
       } else {
-        console.warn("PerFit [Zalando]: ⚠️ Could not extract model height from text");
+        console.log("PerFit [Zalando]: No model height found in text (often not available)");
       }
       
       // UPGRADED REGEX: Extract model size with more flexible pattern
@@ -125,6 +148,12 @@ export class ZalandoProvider extends BaseStoreProvider {
         measurement.itemLength = parseInt(lengthMatch[1]);
         measurement.itemLengthSize = lengthMatch[2].toUpperCase();
         console.log(`PerFit [Zalando]: ✅ Item length extracted: ${measurement.itemLength}cm in size ${measurement.itemLengthSize}`);
+      }
+      
+      // Detect ankle length items
+      if (text.toLowerCase().includes('ankellengde') || text.toLowerCase().includes('ankle length')) {
+        measurement.isAnkleLength = true;
+        console.log("PerFit [Zalando]: ✅ Ankle length item detected");
       }
       
       // Require at least model size for valid measurement
@@ -160,16 +189,25 @@ export class ZalandoProvider extends BaseStoreProvider {
       if (!isExpanded) {
         console.log("PerFit [Zalando]: Opening dropdown...");
         trigger.click();
+        // Increased wait time for React to render
+        await delay(500);
       }
       
-      // Polling: Check every 100ms for up to 2 seconds for React portal to appear
+      // Polling: Check every 100ms for up to 3 seconds for React portal to appear
       const sizes = await new Promise<string[]>((resolve) => {
         let attempts = 0;
-        const maxAttempts = 20; // 20 * 100ms = 2000ms
+        const maxAttempts = 30; // 30 * 100ms = 3000ms (increased from 2s)
         
         const interval = setInterval(() => {
-          // Search broadly for both test-id and ARIA roles
-          const items = document.querySelectorAll('[data-testid="pdp-size-item"], [role="option"]');
+          // Expanded selectors for robustness
+          const items = document.querySelectorAll(
+            '[data-testid="pdp-size-item"], ' +
+            '[data-testid="size-picker-list-item"], ' +
+            '[role="option"], ' +
+            'span.voFjEy, ' +
+            'div._0xLoFW span, ' +
+            'span[class*="size-label"]'
+          );
           
           if (items.length > 0 || attempts >= maxAttempts) {
             clearInterval(interval);
@@ -183,11 +221,16 @@ export class ZalandoProvider extends BaseStoreProvider {
             const found = Array.from(items)
               .map(el => {
                 const text = el.textContent?.trim() || "";
-                // Extract size like "42", "42 2/3", "43 1/3"
-                const match = text.match(/^(\d+(?:\s+\d+\/\d+)?)/);
-                return match ? match[1] : text;
+                // Extract size - support WxL format (32x34), fractions (42 2/3), and regular sizes
+                const wxlMatch = text.match(/(\d+)\s*x\s*(\d+)/);
+                if (wxlMatch) {
+                  return `${wxlMatch[1]}x${wxlMatch[2]}`; // Normalize to 32x34 format
+                }
+                // Extract size with improved regex for fractions (e.g., "42", "42 2/3", "43 1/3")
+                const match = text.match(/(\d+(?:\s+\d+\/\d+)?)/);
+                return match ? match[1].trim() : "";
               })
-              .filter(t => t && /^\d+/.test(t) && !t.includes('Varsle') && !t.includes('påminnelse'));
+              .filter(t => t && (/^\d+/.test(t) || /^\d+x\d+$/.test(t)) && !t.includes('Varsle') && !t.includes('påminnelse'));
             
             resolve(found);
           }
@@ -356,18 +399,22 @@ export class ZalandoProvider extends BaseStoreProvider {
         return [];
       }
 
-      // ALWAYS scrape text measurements for model height (even when table exists)
-      // This enables length/height analysis for ALL products
-      console.log("PerFit [Zalando]: Scraping text measurements for length analysis...");
-      const textData = this.scrapeTextMeasurements();
-      if (textData) {
-        this.textMeasurement = textData;
-        console.log("PerFit [Zalando]: ✅ Model info extracted for length analysis:", textData);
-      }
-
       // If we didn't detect shoes from table content, check headers
       if (detectedCategory !== 'shoes') {
         detectedCategory = this.getTableCategory();
+      }
+
+      // ALWAYS scrape text measurements for model height (EXCEPT for shoes - not relevant)
+      // This enables length/height analysis for clothing products
+      if (detectedCategory !== 'shoes') {
+        console.log("PerFit [Zalando]: Scraping text measurements for length analysis...");
+        const textData = this.scrapeTextMeasurements();
+        if (textData) {
+          this.textMeasurement = textData;
+          console.log("PerFit [Zalando]: ✅ Model info extracted for length analysis:", textData);
+        }
+      } else {
+        console.log("PerFit [Zalando]: Skipping text measurements for shoes (not relevant)");
       }
       
       console.log(`PerFit [Zalando]: Detected category: ${detectedCategory}`);
@@ -381,11 +428,13 @@ export class ZalandoProvider extends BaseStoreProvider {
 
       console.log("PerFit [Zalando]: Table headers:", headers);
 
+      // Get dropdown sizes for all categories (needed for WxL format detection)
+      this.dropdownSizes = await this.scrapeDropdownSizes();
+      console.log("PerFit [Zalando]: Dropdown sizes:", this.dropdownSizes);
+
       // Use base class scraping methods
       if (detectedCategory === 'shoes') {
-        // Get dropdown sizes for interpolation (now async)
-        const dropdownSizes = await this.scrapeDropdownSizes();
-        return this.scrapeShoeSizeTable(bodyMeasureTable, headers, dropdownSizes);
+        return this.scrapeShoeSizeTable(bodyMeasureTable, headers, this.dropdownSizes);
       }
 
       // For clothing, use base class method
