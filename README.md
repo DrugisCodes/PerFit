@@ -2,7 +2,7 @@
 
 Dette prosjektet er en Chrome-utvidelse som hjelper brukere med å finne riktig klesstørrelse ved å sammenligne kroppsmål med nettbutikkers størrelsestabeller.
 
-## 🛠 Installasjon og Oppsett
+## Installasjon og Oppsett
 Følg disse stegene hvis du bytter maskin eller starter prosjektet på nytt:
 
 1. **Gå til prosjektmappen:**
