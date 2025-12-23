@@ -15,8 +15,23 @@ interface ProfileData {
 export const Popup = () => {
   const [profile, setProfile] = useState<ProfileData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isZalandoPage, setIsZalandoPage] = useState(false);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
 
   useEffect(() => {
+    // Check if we're on a Zalando product page
+    if (typeof chrome !== "undefined" && chrome.tabs) {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        const currentTab = tabs[0];
+        if (currentTab && currentTab.url) {
+          const url = currentTab.url.toLowerCase();
+          const isZalando = url.includes("zalando") && url.endsWith(".html") && !url.includes("-home");
+          setIsZalandoPage(isZalando);
+        }
+      });
+    }
+
+    // Load user profile
     if (typeof chrome !== "undefined" && chrome.storage) {
       try {
         chrome.storage.local.get(["userProfile"], (result) => {
@@ -54,14 +69,46 @@ export const Popup = () => {
 
   const handleOpenOptions = () => {
     if (typeof chrome !== "undefined" && chrome.runtime) {
-      chrome.runtime.openOptionsPage();
+      try {
+        // Try opening options page using standard API
+        chrome.runtime.openOptionsPage(() => {
+          if (chrome.runtime.lastError) {
+            console.error("PerFit Popup: Error opening options page:", chrome.runtime.lastError);
+            // Fallback: Open options page manually
+            chrome.tabs.create({ url: chrome.runtime.getURL('options.html') });
+          }
+        });
+      } catch (err) {
+        console.error("PerFit Popup: Exception opening options:", err);
+        // Fallback: Try opening directly
+        try {
+          chrome.tabs.create({ url: chrome.runtime.getURL('options.html') });
+        } catch (fallbackErr) {
+          console.error("PerFit Popup: Fallback failed:", fallbackErr);
+        }
+      }
+    }
+  };
+
+  const handleRunAnalysis = async () => {
+    if (!isZalandoPage) return;
+    
+    setIsAnalyzing(true);
+    try {
+      // Send message to background script to run analysis
+      await chrome.runtime.sendMessage({ action: "RUN_ANALYSIS" });
+      // Close popup after triggering analysis
+      window.close();
+    } catch (err) {
+      console.error("PerFit Popup: Error running analysis:", err);
+      setIsAnalyzing(false);
     }
   };
 
   if (isLoading) {
     return (
-      <div className="w-[350px] h-fit bg-white">
-        <div className="text-gray-600 text-center font-medium p-6">Loading...</div>
+      <div className="w-[300px] h-fit bg-white p-5 m-0 box-border">
+        <div className="text-gray-600 text-center font-medium">Loading...</div>
       </div>
     );
   }
@@ -69,22 +116,22 @@ export const Popup = () => {
   // No profile exists
   if (!profile) {
     return (
-      <div className="w-[350px] h-fit bg-white">
-        <div className="bg-white rounded-xl shadow-lg p-5 text-center m-3 border border-gray-100">
+      <div className="w-[300px] h-fit bg-white p-5 m-0 box-border">
+        <div className="flex flex-col items-center">
           <img 
             src="/logo.png" 
             alt="PerFit Logo" 
-            className="w-24 h-auto object-contain mx-auto mb-6 filter drop-shadow-lg animate-in fade-in zoom-in duration-700"
+            className="w-20 h-auto object-contain mb-5 filter drop-shadow-lg"
           />
           <h2 className="text-base font-bold text-gray-900 mb-2">
             Welcome to PerFit!
           </h2>
-          <p className="text-xs text-gray-600 mb-4">
+          <p className="text-sm text-gray-600 mb-4 text-center leading-relaxed">
             Set up your profile to get personalized fit recommendations.
           </p>
           <button
             onClick={handleOpenOptions}
-            className="w-full py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors text-sm"
+            className="w-full py-2.5 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors text-sm"
           >
             Set Up Profile
           </button>
@@ -93,24 +140,50 @@ export const Popup = () => {
     );
   }
 
-  // Profile exists - show temporary test message
+  // Profile exists - show clean view with logo and buttons
   return (
-    <div className="w-[350px] h-fit bg-gray-50 p-3">
-      <div className="w-full bg-white rounded-xl shadow-lg p-6 text-center border border-green-100">
-        <div className="mx-auto w-10 h-10 bg-green-100 rounded-full flex items-center justify-center mb-3">
-          <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
-          </svg>
+    <div className="w-[300px] h-fit bg-white p-5 m-0 box-border">
+      <div className="flex flex-col items-center">
+        {/* Logo and Title */}
+        <div className="flex items-center justify-center mb-3">
+          <img 
+            src="/logo.png" 
+            alt="PerFit" 
+            className="w-14 h-auto object-contain filter drop-shadow-md"
+          />
+          <h1 className="ml-2 text-xl font-bold text-gray-900">PerFit</h1>
         </div>
-        <h2 className="text-lg font-bold text-green-700 mb-1">Det fungerer!</h2>
-        <p className="text-xs text-gray-600 mb-4">
-          Profil-dataene dine ble funnet i nettleseren.
-        </p>
+
+        {/* Description Text - Conditional based on page and profile */}
+        {!isZalandoPage && (
+          <p className="text-sm text-gray-500 mb-4 text-center leading-relaxed">
+            Find your perfect fit at supported online stores like Zalando.{!profile && ' Add your measurements to get started.'}
+          </p>
+        )}
+
+        {/* Measure Size Button (only on Zalando pages) - PerFit Gradient */}
+        {isZalandoPage && (
+          <button
+            onClick={handleRunAnalysis}
+            disabled={isAnalyzing}
+            className="w-full py-3 mb-3 text-white font-bold rounded-full transition-all text-base shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{
+              background: isAnalyzing ? '#94a3b8' : 'linear-gradient(90deg, #3b82f6, #8b5cf6)',
+              opacity: isAnalyzing ? 0.6 : 1
+            }}
+            onMouseEnter={(e) => !isAnalyzing && (e.currentTarget.style.opacity = '0.9')}
+            onMouseLeave={(e) => !isAnalyzing && (e.currentTarget.style.opacity = '1')}
+          >
+            {isAnalyzing ? "Analyzing..." : "Measure size"}
+          </button>
+        )}
+
+        {/* Add/Change Measurements Button */}
         <button
           onClick={handleOpenOptions}
-          className="w-full py-2 bg-gray-100 text-gray-700 font-medium rounded-lg hover:bg-gray-200 transition-all text-xs"
+          className="w-full py-2.5 px-4 bg-gray-100 text-blue-700 font-medium rounded hover:bg-gray-200 transition-all text-sm border border-gray-200"
         >
-          Trykk for å se endre målene
+          {profile ? "Change measurements" : "Add measurements"}
         </button>
       </div>
     </div>

@@ -57,50 +57,83 @@ export class ZalandoProvider extends BaseStoreProvider {
   /**
    * Scrape text-based measurements from 'Passform' section
    * Fallback when size tables are not available
+   * 
+   * UPGRADED: More robust DOM search and flexible regex patterns
    */
   private scrapeTextMeasurements(): TextMeasurement | null {
     try {
       console.log("PerFit [Zalando]: Attempting text-based measurement extraction...");
       
-      // Find Passform accordion section
+      let text = '';
+      
+      // Strategy 1: Try Passform accordion (most specific)
       const passformSection = document.querySelector('[data-testid="pdp-accordion-passform"]');
-      if (!passformSection) {
-        console.warn("PerFit [Zalando]: Could not find 'Passform' section");
-        return null;
+      if (passformSection) {
+        text = passformSection.textContent || '';
+        console.log("PerFit [Zalando]: Found Passform section");
       }
       
-      const text = passformSection.textContent || '';
-      console.log("PerFit [Zalando]: Passform text:", text.substring(0, 200));
+      // Strategy 2: Fallback to broader product description area
+      if (!text || text.length < 50) {
+        console.log("PerFit [Zalando]: Passform section empty/missing, searching product details...");
+        const productDetails = document.querySelector('[data-testid="pdp-product-description"]') ||
+                              document.querySelector('.pdp-description') ||
+                              document.querySelector('#product-detail');
+        
+        if (productDetails) {
+          text = productDetails.textContent || '';
+          console.log("PerFit [Zalando]: Using product details section");
+        }
+      }
+      
+      // Strategy 3: Last resort - search document body (first 2000 chars for performance)
+      if (!text || text.length < 50) {
+        console.log("PerFit [Zalando]: Searching entire page body (first 2000 chars)...");
+        text = (document.body.innerText || document.body.textContent || '').substring(0, 2000);
+      }
+      
+      // Log text sample for debugging
+      const textSample = text.substring(0, 300).replace(/\s+/g, ' ');
+      console.log("PerFit [Zalando]: Analyzing text for model info:", textSample);
       
       const measurement: Partial<TextMeasurement> = { modelSize: '' };
       
-      // Extract model height: "Modellen er 189 cm"
-      const heightMatch = text.match(/Modellen er (\d+)\s*cm/i);
+      // UPGRADED REGEX: Extract model height with flexible pattern
+      // Handles: "Modellhøyde: 187 cm", "Modellen er 189 cm", "Model: 185cm", etc.
+      const heightMatch = text.match(/(?:Modell(?:høyde|en)?|Høyde|Model)[:\s]*(?:er)?[\s\w]*?(\d{3})\s*cm/i);
       if (heightMatch) {
         measurement.modelHeight = parseInt(heightMatch[1]);
-        console.log(`PerFit [Zalando]: Found model height: ${measurement.modelHeight}cm`);
+        console.log(`PerFit [Zalando]: ✅ Model height extracted: ${measurement.modelHeight}cm`);
+      } else {
+        console.warn("PerFit [Zalando]: ⚠️ Could not extract model height from text");
       }
       
-      // Extract model size: "har på seg størrelse M"
-      const sizeMatch = text.match(/størrelse\s+([A-Z0-9]+)/i);
+      // UPGRADED REGEX: Extract model size with more flexible pattern
+      // Handles: "størrelse M", "Size M", "str. L", etc.
+      const sizeMatch = text.match(/(?:størrelse|size|str\.?)\s+([A-Z0-9]{1,3})/i);
       if (sizeMatch) {
-        measurement.modelSize = sizeMatch[1];
-        console.log(`PerFit [Zalando]: Found model size: ${measurement.modelSize}`);
+        measurement.modelSize = sizeMatch[1].toUpperCase();
+        console.log(`PerFit [Zalando]: ✅ Model size extracted: ${measurement.modelSize}`);
+      } else {
+        console.warn("PerFit [Zalando]: ⚠️ Could not extract model size from text");
       }
       
-      // Extract item length: "Totallengde: 69 cm i størrelse M"
-      const lengthMatch = text.match(/Totallengde[:\s]+(\d+)\s*cm\s+i\s+størrelse\s+([A-Z0-9]+)/i);
+      // UPGRADED REGEX: Extract item length with flexible pattern
+      // Handles: "Totallengde: 69 cm i størrelse M", "Length: 70cm size L", etc.
+      const lengthMatch = text.match(/(?:Total)?(?:lengde|length)[:\s]+(\d{2,3})\s*cm\s+(?:i\s+)?(?:størrelse|size)\s+([A-Z0-9]{1,3})/i);
       if (lengthMatch) {
         measurement.itemLength = parseInt(lengthMatch[1]);
-        measurement.itemLengthSize = lengthMatch[2];
-        console.log(`PerFit [Zalando]: Found item length: ${measurement.itemLength}cm in size ${measurement.itemLengthSize}`);
+        measurement.itemLengthSize = lengthMatch[2].toUpperCase();
+        console.log(`PerFit [Zalando]: ✅ Item length extracted: ${measurement.itemLength}cm in size ${measurement.itemLengthSize}`);
       }
       
+      // Require at least model size for valid measurement
       if (!measurement.modelSize) {
-        console.warn("PerFit [Zalando]: Could not extract model size from text");
+        console.warn("PerFit [Zalando]: ❌ Could not extract model size - aborting text-based measurement");
         return null;
       }
       
+      console.log("PerFit [Zalando]: ✅ Text measurement extraction complete:", measurement);
       return measurement as TextMeasurement;
     } catch (error) {
       console.error("PerFit [Zalando]: Error scraping text measurements:", error);
@@ -321,6 +354,15 @@ export class ZalandoProvider extends BaseStoreProvider {
         
         console.error("PerFit [Zalando]: Could not find size table or extract text measurements");
         return [];
+      }
+
+      // ALWAYS scrape text measurements for model height (even when table exists)
+      // This enables length/height analysis for ALL products
+      console.log("PerFit [Zalando]: Scraping text measurements for length analysis...");
+      const textData = this.scrapeTextMeasurements();
+      if (textData) {
+        this.textMeasurement = textData;
+        console.log("PerFit [Zalando]: ✅ Model info extracted for length analysis:", textData);
       }
 
       // If we didn't detect shoes from table content, check headers

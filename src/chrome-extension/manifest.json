@@ -4,13 +4,14 @@
   "name": "PerFit",
   "version": "1.0.0",
   "action": {
+    "default_popup": "popup.html",
     "default_icon": {
       "16": "logo.png",
       "32": "logo.png",
       "48": "logo.png",
       "128": "logo.png"
     },
-    "default_title": "Click to run PerFit on this page"
+    "default_title": "PerFit - View and manage your measurements"
   },
   "background": {
     "service_worker": "background.js"
@@ -33,7 +34,7 @@
   "web_accessible_resources": [
     {
       "resources": ["logo.png"],
-      "matches": ["*://*.zalando.no/*", "*://*.zalando.com/*"]
+      "matches": ["<all_urls>"]
     }
   ]
 }

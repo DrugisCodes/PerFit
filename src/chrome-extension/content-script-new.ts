@@ -15,6 +15,72 @@ import { UserProfile, SizeRecommendation, GarmentCategory } from '../stores/type
 import { calculateRecommendation, calculateTextBasedRecommendation } from './RecommendationEngine';
 
 /**
+ * Cached recommendation for Resume State pattern
+ * Stores the last successful size recommendation to avoid re-scraping
+ */
+let cachedRecommendation: SizeRecommendation | null = null;
+
+/**
+ * Analyze length/height fit between user and model
+ * 
+ * Compares user's height against model's height to detect significant mismatches.
+ * Returns a warning message if the garment may be too long or too short.
+ * 
+ * @param userProfile - User's body measurements including height
+ * @param textData - Scraped text measurements from product page (model info)
+ * @param recommendedSize - The recommended size (for future size-based length adjustments)
+ * @returns Warning message string or null if no significant mismatch
+ */
+function analyzeLengthFit(
+  userProfile: UserProfile,
+  textData: any,
+  _recommendedSize: string // Reserved for future size-based length adjustments
+): string | null {
+  // Guard: Need both user height and model height
+  if (!userProfile.height || !textData || !textData.modelHeight) {
+    console.log("PerFit [Length Analysis]: Missing height data - skipping analysis");
+    return null;
+  }
+
+  // ROBUST CASTING: Handle both string ("177") and number (177) inputs
+  const userHeight = Number(userProfile.height);
+  const modelHeight = Number(textData.modelHeight);
+  
+  // Validate parsed values
+  if (isNaN(userHeight) || isNaN(modelHeight) || userHeight <= 0 || modelHeight <= 0) {
+    console.warn("PerFit [Length Analysis]: Invalid height values:", {
+      userHeight: userProfile.height,
+      modelHeight: textData.modelHeight
+    });
+    return null;
+  }
+
+  // Calculate height difference (positive = model is taller)
+  const heightDiff = modelHeight - userHeight;
+  
+  console.log(`PerFit [Length Analysis]: User ${userHeight}cm vs Model ${modelHeight}cm (diff: ${heightDiff > 0 ? '+' : ''}${heightDiff}cm)`);
+
+  // LOWERED THRESHOLD: Model is significantly taller (> 6cm)
+  if (heightDiff > 6) {
+    const warning = `⚠️ Modellen er ${heightDiff} cm høyere enn deg. Selv om vidden passer, kan plagget føles lenger på deg.`;
+    console.log("PerFit [Length Analysis]: ⚠️ WARNING triggered:", warning);
+    return warning;
+  }
+
+  // LOWERED THRESHOLD: User is significantly taller (> 6cm)
+  if (heightDiff < -6) {
+    const userTaller = Math.abs(heightDiff);
+    const warning = `⚠️ Du er ${userTaller} cm høyere enn modellen. Plagget kan oppleves kortere på deg.`;
+    console.log("PerFit [Length Analysis]: ⚠️ WARNING triggered:", warning);
+    return warning;
+  }
+
+  // No significant height difference
+  console.log("PerFit [Length Analysis]: ✅ Height difference within acceptable range (±6cm)");
+  return null;
+}
+
+/**
  * Inject UI element into isolated Shadow DOM container
  * Uses React Root Sibling strategy to avoid hydration collisions
  */
@@ -135,6 +201,22 @@ function showRecommendation(recommendation: SizeRecommendation): void {
           ${tableInfo}
         </div>
       ` : ''}
+      ${recommendation.lengthNote ? `
+        <div style="
+          font-size: 12px; 
+          margin-top: 12px; 
+          padding: 12px; 
+          background: rgba(255, 193, 7, 0.25); 
+          border: 1.5px solid rgba(255, 193, 7, 0.6); 
+          border-radius: 8px; 
+          color: #fff; 
+          line-height: 1.5;
+          font-weight: 500;
+          text-shadow: 0 1px 3px rgba(0,0,0,0.3);
+        ">
+          📏 ${recommendation.lengthNote}
+        </div>
+      ` : ''}
     </div>
   `;
 
@@ -213,6 +295,14 @@ async function runPerFit(): Promise<void> {
         const recommendation = calculateTextBasedRecommendation(userProfile, textData);
         
         if (recommendation) {
+          // Add length/height analysis
+          const lengthWarning = analyzeLengthFit(userProfile, textData, recommendation.size);
+          if (lengthWarning) {
+            recommendation.lengthNote = lengthWarning;
+            console.log("PerFit: Length warning added:", lengthWarning);
+          }
+          
+          cachedRecommendation = recommendation; // Cache text-based result
           removeActionMenu(); // Remove menu before showing recommendation
           showRecommendation(recommendation);
           return;
@@ -236,10 +326,23 @@ async function runPerFit(): Promise<void> {
       return;
     }
 
+    // Add length/height analysis (check if provider has text measurements)
+    if ('textMeasurement' in provider && (provider as any).textMeasurement) {
+      const textData = (provider as any).textMeasurement;
+      const lengthWarning = analyzeLengthFit(userProfile, textData, recommendation.size);
+      if (lengthWarning) {
+        recommendation.lengthNote = lengthWarning;
+        console.log("PerFit: Length warning added:", lengthWarning);
+      }
+    }
+
     // Highlight row
     if (recommendation.matchedRow && recommendation.matchedRow.rowIndex !== undefined) {
       provider.highlightRow(recommendation.matchedRow.rowIndex, recommendation.fitNote);
     }
+
+    // Cache the recommendation for Resume State
+    cachedRecommendation = recommendation;
 
     // Show recommendation
     console.log(`PerFit: ✅ Recommendation: ${recommendation.size}`);
@@ -295,13 +398,16 @@ function showActionMenu(): void {
     `;
 
     menu.innerHTML = `
-      <div style="font-size: 24px; font-weight: bold; color: #111827;">PerFit</div>
+      <div style="font-size: 24px; font-weight: bold; color: #111827; display: flex; align-items: center; justify-content: center;">
+        <img src="${chrome.runtime.getURL('logo.png')}" alt="PerFit Logo" style="height: 48px; width: auto; vertical-align: middle; margin-right: 10px;">
+        PerFit
+      </div>
       
       <button id="perfit-run" style="
-        background: #10b981; color: white; border: none;
-        padding: 16px; border-radius: 50px; width: 100%;
-        font-size: 18px; font-weight: bold; cursor: pointer;
-        box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+        background: linear-gradient(90deg, #3b82f6 0%, #8b5cf6 100%); color: white; border: none;
+        padding: 10px 24px; border-radius: 50px; width: 100%;
+        font-size: 16px; font-weight: bold; cursor: pointer;
+        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
       ">Measure size</button>
 
       <div id="perfit-edit" style="
@@ -348,9 +454,61 @@ function showActionMenu(): void {
 }
 
 /**
+ * Handle activation - Smart logic for Resume State
+ * 
+ * Scenario A: Cached recommendation exists -> Show it immediately
+ * Scenario B: No cache -> Show action menu
+ * Scenario C: UI already visible -> Toggle (close it)
+ */
+function handleActivation(): void {
+  // Check if any UI is already visible
+  const menuVisible = !!document.getElementById('perfit-action-host');
+  const recommendationVisible = !!document.getElementById('perfit-recommendation-host');
+  
+  if (menuVisible || recommendationVisible) {
+    // Scenario C: Toggle - close existing UI
+    removeActionMenu();
+    removeRecommendation();
+    console.log("PerFit: Toggled UI off");
+    return;
+  }
+  
+  if (cachedRecommendation) {
+    // Scenario A: Show cached recommendation directly
+    console.log("PerFit: Showing cached recommendation");
+    showRecommendation(cachedRecommendation);
+  } else {
+    // Scenario B: No cache - show action menu
+    console.log("PerFit: Showing action menu");
+    showActionMenu();
+  }
+}
+
+/**
+ * Remove recommendation box from DOM
+ */
+function removeRecommendation(): void {
+  const host = document.getElementById('perfit-recommendation-host');
+  if (host) {
+    host.remove();
+    console.log("PerFit: Recommendation removed");
+  }
+}
+
+/**
  * Click-to-Run Entry Point
  * Runs immediately when injected by background service worker
  */
+
+// Listen for activation messages from background script (Resume State)
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message.action === "ACTIVATE_PERFIT") {
+    console.log("PerFit: Received activation message");
+    handleActivation();
+    sendResponse({ success: true });
+  }
+  return true; // Keep message channel open for async response
+});
 
 // NUCLEAR GUARD: Tillater alle sider som ender på .html, så lenge det ikke er en kategoriside
 const path = window.location.pathname.toLowerCase();
@@ -359,5 +517,6 @@ const isProduct = path.endsWith(".html") && !path.includes("-home");
 if (!isProduct) {
   console.log("PerFit: Not a product page, stopping.");
 } else {
-  showActionMenu();
+  // Initial activation on fresh injection
+  handleActivation();
 }

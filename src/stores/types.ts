@@ -120,4 +120,5 @@ export interface SizeRecommendation {
   buffer: number;         // Buffer added based on fit preference
   matchedRow?: SizeRow;   // The table row that matched
   fitNote?: string;       // Fit difference note for shoes (e.g., "IDEELL (+0.5 cm plass)")
+  lengthNote?: string;    // Length/height mismatch warning (e.g., "Modellen er 10 cm høyere enn deg")
 }

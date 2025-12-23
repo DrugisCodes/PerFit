@@ -1,14 +1,29 @@
 /* src/chrome-extension/popup/popup-style.css */
+
+/* Global box-sizing for consistent sizing */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
 html, body {
-  /* Lås bredden så den er smal og fin */
-  width: 350px !important;
+  /* Fixed width for consistent popup size */
+  width: 300px !important;
   
-  /* FJERN faste høyder. Bruk 'auto' så vinduet krymper til innholdet */
+  /* Auto height to fit content */
   height: auto !important;
   min-height: 0 !important;
   
-  margin: 0;
-  padding: 0;
+  /* Remove all margins and padding */
+  margin: 0 !important;
+  padding: 0 !important;
+  
   overflow: hidden;
   background-color: white;
 }
+
+#root {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+}
+
