@@ -421,50 +421,147 @@ function calculateUnknownCategoryRecommendation(
  * Calculate recommendation based on text measurements (when tables are missing)
  * 
  * Logic:
- * - Compare user height with model height
- * - Assuming ~6cm height difference ≈ 1 size difference
- * - Apply fit preference adjustment
+ * - CHEST ANCHOR: Use userProfile.chest as primary size determinant (101cm = M/L boundary)
+ * - FIT HINT INTEGRATION: 'stor' adjusts down, 'liten' adjusts up from chest baseline
+ * - HEIGHT VALIDATION: Confirms size choice (shorter user + large item = stay with smaller size)
+ * - SAFEGUARD: Never recommend size < M if chest ≥ 101cm
  * 
- * Example: Model is 189cm wearing size M, user is 175cm (14cm shorter)
- * → -14cm / 6 = -2.33 → Recommend S (2 sizes down from M)
- * → If user prefers loose fit, adjust to M
+ * Example: User 179cm, chest 101cm, model 189cm wearing L, fitHint 'stor'
+ * → Base (101cm chest) = M, Adjustment (stor) = stay M (relaxed fit), Height (-10cm) confirms M
  */
 export function calculateTextBasedRecommendation(
   userProfile: UserProfile,
-  textData: { modelHeight?: number; modelSize: string; itemLength?: number; itemLengthSize?: string }
+  textData: { modelHeight?: number; modelSize: string; itemLength?: number; itemLengthSize?: string; fitHint?: string }
 ): SizeRecommendation | null {
   try {
     const userHeight = parseInt(userProfile.height);
+    const userTorso = userProfile.torsoLength ? parseInt(userProfile.torsoLength) : null;
+    const userChest = userProfile.chest ? parseInt(userProfile.chest) : null;
+    const fitHint = textData.fitHint;
     
-    if (!textData.modelHeight || isNaN(userHeight) || userHeight <= 0) {
-      console.warn("PerFit [Text]: Insufficient data for text-based recommendation");
-      console.log(`PerFit [Text]: User height: ${userHeight}, Model height: ${textData.modelHeight}`);
-      return null;
-    }
+    console.log(`PerFit [Text]: User height: ${userHeight}cm, User torso: ${userTorso}cm, User chest: ${userChest}cm, Model height: ${textData.modelHeight}cm, Model size: ${textData.modelSize}, Item length: ${textData.itemLength}cm, Fit hint: ${fitHint || 'none'}`);
     
-    console.log(`PerFit [Text]: User height: ${userHeight}cm, Model height: ${textData.modelHeight}cm wearing size ${textData.modelSize}`);
-    
-    const heightDiff = userHeight - textData.modelHeight;
     const sizeScale = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL'];
-    const modelSizeIndex = sizeScale.indexOf(textData.modelSize.toUpperCase());
+    let modelSizeIndex = sizeScale.indexOf(textData.modelSize.toUpperCase());
+    let recommendedIndex = modelSizeIndex;
+    let fitNote = '';
+    let chestBasedStart = false;
     
-    if (modelSizeIndex === -1) {
-      console.warn(`PerFit [Text]: Unknown model size: ${textData.modelSize}`);
+    // === STRATEGY 1: CHEST-BASED ANCHOR (PRIMARY for tops) ===
+    if (userChest && modelSizeIndex === -1) {
+      console.log(`PerFit [Text]: Using CHEST-BASED fallback (user chest: ${userChest}cm)`);
+      chestBasedStart = true;
+      
+      // Chest-based size mapping (conservative estimates)
+      if (userChest < 90) {
+        recommendedIndex = sizeScale.indexOf('S');
+        console.log(`PerFit [Text]: Chest < 90cm → Base size S`);
+      } else if (userChest < 100) {
+        recommendedIndex = sizeScale.indexOf('M');
+        console.log(`PerFit [Text]: Chest 90-99cm → Base size M`);
+      } else if (userChest < 106) {
+        // 101cm is M/L boundary - be conservative and start with M
+        recommendedIndex = sizeScale.indexOf('M');
+        console.log(`PerFit [Text]: Chest 100-105cm → Base size M (M/L boundary)`);
+      } else if (userChest < 110) {
+        recommendedIndex = sizeScale.indexOf('L');
+        console.log(`PerFit [Text]: Chest 106-109cm → Base size L`);
+      } else {
+        recommendedIndex = sizeScale.indexOf('XL');
+        console.log(`PerFit [Text]: Chest ≥110cm → Base size XL`);
+      }
+    } else if (modelSizeIndex === -1) {
+      console.error(`PerFit [Text]: Cannot proceed - no valid model size and no chest measurement`);
       return null;
     }
     
-    // Heuristic: ~6cm height difference ≈ 1 size difference
-    const sizeDiff = Math.round(heightDiff / 6);
-    let recommendedIndex = modelSizeIndex + sizeDiff;
+    // === STRATEGY 2: FIT HINT ADJUSTMENT ===
+    if (fitHint) {
+      console.log(`PerFit [Text]: Applying fit hint adjustment: ${fitHint}`);
+      
+      if (fitHint === 'stor' && recommendedIndex < sizeScale.length - 1) {
+        // Item runs large - would normally go down, but check chest first
+        const currentSize = sizeScale[recommendedIndex];
+        console.log(`PerFit [Text]: Item runs LARGE - considering size adjustment from ${currentSize}`);
+        
+        // If chest is at M/L boundary (100-105cm), stay at M for relaxed fit
+        if (userChest && userChest >= 100 && userChest < 106 && recommendedIndex === sizeScale.indexOf('M')) {
+          console.log(`PerFit [Text]: Staying at M despite 'stor' hint - chest ${userChest}cm needs M for relaxed fit`);
+          fitNote = `Valgt Medium pga. brystmål (${userChest}cm) og fordi varen er stor i størrelsen (vil sitte Relaxed)`;
+        } else if (recommendedIndex > sizeScale.indexOf('M')) {
+          // Can safely go down if we're above M
+          recommendedIndex -= 1;
+          console.log(`PerFit [Text]: Going down 1 size due to 'stor' hint → ${sizeScale[recommendedIndex]}`);
+          fitNote = `Valgt ${sizeScale[recommendedIndex]} fordi varen er stor i størrelsen`;
+        }
+      } else if (fitHint === 'liten' && recommendedIndex > 0) {
+        // Item runs small - go up a size
+        recommendedIndex += 1;
+        console.log(`PerFit [Text]: Item runs SMALL - going up 1 size → ${sizeScale[recommendedIndex]}`);
+        fitNote = `Valgt ${sizeScale[recommendedIndex]} fordi varen er liten i størrelsen`;
+      }
+    }
     
-    // Apply fit preference adjustment
+    // === STRATEGY 3: HEIGHT VALIDATION (confirms size choice) ===
+    if (textData.modelHeight && userHeight && userHeight > 0 && !fitNote) {
+      const heightDiff = userHeight - textData.modelHeight;
+      console.log(`PerFit [Text]: Height validation - User ${userHeight}cm vs Model ${textData.modelHeight}cm (diff: ${heightDiff}cm)`);
+      
+      // Height difference confirms or challenges chest-based choice
+      if (heightDiff < -10 && recommendedIndex > sizeScale.indexOf('S')) {
+        console.log(`PerFit [Text]: User significantly shorter (${heightDiff}cm) - confirms smaller size to avoid length issues`);
+        // Don't adjust further if chest already determined size, just note it
+        if (chestBasedStart && !fitNote) {
+          fitNote = `Valgt ${sizeScale[recommendedIndex]} pga. brystmål (${userChest}cm). Høydeforskjell på ${Math.abs(heightDiff)}cm bekrefter valget`;
+        }
+      } else if (heightDiff > 10 && recommendedIndex < sizeScale.length - 1) {
+        console.log(`PerFit [Text]: User significantly taller (+${heightDiff}cm) - may need to consider size up`);
+        // Only suggest if chest doesn't prevent it
+        if (!chestBasedStart && !fitNote) {
+          fitNote = `Basert på høydeforskjell (+${heightDiff}cm)`;
+        }
+      }
+    }
+    
+    // === STRATEGY 4: TORSO LENGTH ANALYSIS (for length fit) ===
+    if (userTorso && textData.itemLength && !fitNote) {
+      console.log(`PerFit [Text]: Using torsoLength-based length analysis`);
+      
+      const idealGarmentLength = userTorso + 20; // Middle of range (15-25cm)
+      const lengthDiff = textData.itemLength - idealGarmentLength;
+      
+      console.log(`PerFit [Text]: Ideal garment length: ${idealGarmentLength}cm, Actual: ${textData.itemLength}cm, Diff: ${lengthDiff}cm`);
+      
+      if (Math.abs(lengthDiff) > 8) {
+        fitNote = `Basert på totallengde ${textData.itemLength}cm vs din torso ${userTorso}cm`;
+      }
+    }
+    
+    // Apply fit preference adjustment (optional)
     const fitPreference = userProfile.fitPreference || 5;
-    if (fitPreference <= 3) {
-      recommendedIndex -= 1; // Tight fit: go down a size
+    if (fitPreference <= 3 && recommendedIndex > 0) {
+      recommendedIndex -= 1;
       console.log(`PerFit [Text]: Tight fit preference (${fitPreference}) - going down 1 size`);
-    } else if (fitPreference >= 7) {
-      recommendedIndex += 1; // Loose fit: go up a size
+    } else if (fitPreference >= 7 && recommendedIndex < sizeScale.length - 1) {
+      recommendedIndex += 1;
       console.log(`PerFit [Text]: Loose fit preference (${fitPreference}) - going up 1 size`);
+    }
+    
+    // === FINAL CHEST SAFEGUARD ===
+    if (userChest && userChest >= 101) {
+      const minSizeIndex = sizeScale.indexOf('M');
+      
+      if (recommendedIndex < minSizeIndex) {
+        console.log(`PerFit [Text]: 🛡️ CHEST SAFEGUARD - User chest ${userChest}cm requires minimum M`);
+        recommendedIndex = minSizeIndex;
+        
+        const heightDiff = textData.modelHeight && userHeight ? Math.abs(textData.modelHeight - userHeight) : 0;
+        if (heightDiff > 0 && !fitNote) {
+          fitNote = `Anbefalt Medium pga. brystmål (${userChest}cm), til tross for høydeforskjell på ${heightDiff}cm`;
+        } else if (!fitNote) {
+          fitNote = `Anbefalt Medium for å sikre god passform over skuldre og bryst (${userChest}cm)`;
+        }
+      }
     }
     
     // Clamp to valid range
@@ -472,16 +569,16 @@ export function calculateTextBasedRecommendation(
     
     const recommendedSize = sizeScale[recommendedIndex];
     
-    console.log(`PerFit [Text]: ✅ Recommended size ${recommendedSize} (height diff: ${heightDiff}cm, size diff: ${sizeDiff}, fit pref: ${fitPreference})`);
+    console.log(`PerFit [Text]: ✅ Recommended size ${recommendedSize} (chest-based: ${chestBasedStart}, fit hint: ${fitHint || 'none'})`);
     
     return {
       size: recommendedSize,
-      confidence: 0.7, // Lower confidence for text-based
+      confidence: chestBasedStart ? 0.85 : (userTorso && textData.itemLength ? 0.8 : 0.7),
       category: 'top',
-      userChest: userHeight, // Using height as proxy
-      targetChest: userHeight,
+      userChest: userChest || userHeight,
+      targetChest: userChest || userHeight,
       buffer: 0,
-      fitNote: 'Basert på modellens mål' // "Based on model's measurements"
+      fitNote: fitNote || `Basert på brystmål (${userChest}cm)`
     };
   } catch (error) {
     console.error("PerFit [Text]: Error calculating text-based recommendation:", error);

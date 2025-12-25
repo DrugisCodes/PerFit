@@ -18,6 +18,7 @@ interface TextMeasurement {
   itemLength?: number;       // Item length in cm (e.g., 69)
   itemLengthSize?: string;   // Size for which length is specified (e.g., "M")
   isAnkleLength?: boolean;   // Whether item is designed as ankle length
+  fitHint?: string;          // Fit hint: 'liten' or 'stor' (small/large)
 }
 
 /**
@@ -32,40 +33,65 @@ export class ZalandoProvider extends BaseStoreProvider {
   /**
    * Extract fit hint from Zalando page
    * Looks for text like "Varen er liten" or "Varen er stor" with flexible regex matching
+   * 
+   * PRIORITY ORDER:
+   * 1. Passform section (highest priority)
+   * 2. Product description areas
+   * 3. Body fallback (STRICT - must have context words very close to 'stor'/'liten')
    */
   private extractFitHint(): string | null {
     try {
-      // 1. PRIORITET: Målrettet søk i Zalando passform-elementer (klasse .HlZ_Tf)
+      // 1. HØYESTE PRIORITET: Passform-seksjonen (accordion)
+      const passformAccordion = document.querySelector('[data-testid="pdp-accordion-passform"]');
+      if (passformAccordion) {
+        const text = passformAccordion.textContent?.toLowerCase() || '';
+        
+        if (/(størrelsen|varen|modellen|anbefaler).*liten|liten.*(størrelsen|varen|størrelse|anbefal)/i.test(text)) {
+          console.log(`PerFit [Zalando]: ✅ Fit hint detected (Passform section) - Item runs SMALL`);
+          console.log(`PerFit [Zalando]: Funnet tekst: "${passformAccordion.textContent?.trim()}"`);
+          return 'liten';
+        }
+        
+        if (/(størrelsen|varen|modellen|anbefaler).*stor|stor.*(størrelsen|varen|størrelse|anbefal)/i.test(text)) {
+          console.log(`PerFit [Zalando]: ✅ Fit hint detected (Passform section) - Item runs LARGE`);
+          console.log(`PerFit [Zalando]: Funnet tekst: "${passformAccordion.textContent?.trim()}"`);
+          return 'stor';
+        }
+      }
+      
+      // 2. SEKUNDÆR PRIORITET: Målrettede passform-elementer (klasse .HlZ_Tf)
       const passformElements = document.querySelectorAll('.HlZ_Tf, [class*="passform"], [class*="fit-hint"]');
       
       for (const element of passformElements) {
         const text = element.textContent?.toLowerCase() || '';
         
-        // Fleksibel regex for å fange "liten" kombinasjoner
         if (/(størrelsen|varen|modellen|anbefaler).*liten|liten.*(størrelsen|varen|størrelse|anbefal)/i.test(text)) {
-          console.log(`PerFit [Zalando]: ✅ Fit hint detected - Item runs SMALL`);
+          console.log(`PerFit [Zalando]: ✅ Fit hint detected (fit element) - Item runs SMALL`);
           console.log(`PerFit [Zalando]: Funnet tekst: "${element.textContent?.trim()}"`);
           return 'liten';
         }
         
-        // Fleksibel regex for å fange "stor" kombinasjoner
         if (/(størrelsen|varen|modellen|anbefaler).*stor|stor.*(størrelsen|varen|størrelse|anbefal)/i.test(text)) {
-          console.log(`PerFit [Zalando]: ✅ Fit hint detected - Item runs LARGE`);
+          console.log(`PerFit [Zalando]: ✅ Fit hint detected (fit element) - Item runs LARGE`);
           console.log(`PerFit [Zalando]: Funnet tekst: "${element.textContent?.trim()}"`);
           return 'stor';
         }
       }
       
-      // 2. FALLBACK: Søk i hele document.body hvis ikke funnet i målrettede elementer
+      // 3. FALLBACK: Søk i hele document.body MED STRENG BEGRENSNING
+      // Krever at 'stor'/'liten' står RETT ved siden av kontekstord (maks 15 tegn mellom)
       const bodyText = document.body.textContent?.toLowerCase() || '';
       
-      if (/(størrelsen|varen|modellen|anbefaler).*liten|liten.*(størrelsen|varen|størrelse|anbefal)/i.test(bodyText)) {
-        console.log("PerFit [Zalando]: ✅ Fit hint detected (body fallback) - Item runs SMALL");
+      // Streng regex: Maks 15 tegn mellom kontekstord og 'liten'
+      if (/(størrelsen|varen|modellen|passform|anbefaler vi).{0,15}\bliten\b|\bliten\b.{0,15}(størrelsen|varen|størrelse|passform|anbefal)/i.test(bodyText)) {
+        console.log("PerFit [Zalando]: ✅ Fit hint detected (body fallback - strict) - Item runs SMALL");
         return 'liten';
       }
       
-      if (/(størrelsen|varen|modellen|anbefaler).*stor|stor.*(størrelsen|varen|størrelse|anbefal)/i.test(bodyText)) {
-        console.log("PerFit [Zalando]: ✅ Fit hint detected (body fallback) - Item runs LARGE");
+      // Streng regex: Maks 15 tegn mellom kontekstord og 'stor'
+      // Unngå 'stor' når det står alene uten passform-kontekst
+      if (/(størrelsen|varen|modellen|passform|anbefaler vi).{0,15}\bstor\b|\bstor\b.{0,15}(størrelsen|varen|størrelse|passform|anbefal)/i.test(bodyText)) {
+        console.log("PerFit [Zalando]: ✅ Fit hint detected (body fallback - strict) - Item runs LARGE");
         return 'stor';
       }
       
@@ -131,23 +157,45 @@ export class ZalandoProvider extends BaseStoreProvider {
         console.log("PerFit [Zalando]: No model height found in text (often not available)");
       }
       
-      // UPGRADED REGEX: Extract model size with more flexible pattern
-      // Handles: "størrelse M", "Size M", "str. L", etc.
-      const sizeMatch = text.match(/(?:størrelse|size|str\.?)\s+([A-Z0-9]{1,3})/i);
+      // UPGRADED REGEX: Extract model size with STRICT validation
+      // Matches letters (S, M, L, XL) or numbers (48, 50) immediately after 'størrelse' or 'str'
+      // Only accepts: S, M, L, XL, XXL, XXXL or numeric sizes (32, 48, 50)
+      // REJECTS: LEG, FIT, TALL, and other non-size words
+      const sizeMatch = text.match(/(?:størrelse|size|str\.?)\s*([A-Z]{1,4}|\d{2,3})(?:\s|\.|,|$)/i);
       if (sizeMatch) {
-        measurement.modelSize = sizeMatch[1].toUpperCase();
-        console.log(`PerFit [Zalando]: ✅ Model size extracted: ${measurement.modelSize}`);
+        const extractedSize = sizeMatch[1].toUpperCase();
+        
+        // Validate: Must be standard size (S/M/L/XL/XXL/XXXL) OR numeric (32, 48, etc.)
+        const validSizes = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL'];
+        const isValidSize = validSizes.includes(extractedSize) || /^\d{2,3}$/.test(extractedSize);
+        
+        // Reject common non-size words
+        const invalidWords = ['LEG', 'FIT', 'TALL', 'SHORT', 'LANG', 'KORT', 'REGULAR', 'SLIM', 'WIDE'];
+        const isInvalidWord = invalidWords.includes(extractedSize);
+        
+        if (isValidSize && !isInvalidWord) {
+          measurement.modelSize = extractedSize;
+          console.log(`PerFit [Zalando]: ✅ Model size extracted: ${measurement.modelSize}`);
+        } else {
+          console.warn(`PerFit [Zalando]: ⚠️ Rejected invalid size '${extractedSize}' - not a standard clothing size`);
+          console.log(`PerFit [Zalando]: Valid sizes: ${validSizes.join(', ')}, or numeric (32-999)`);
+        }
       } else {
-        console.warn("PerFit [Zalando]: ⚠️ Could not extract model size from text");
+        console.log("PerFit [Zalando]: ⚠️ Could not extract model size from text (will use fallback logic)");
       }
       
       // UPGRADED REGEX: Extract item length with flexible pattern
-      // Handles: "Totallengde: 69 cm i størrelse M", "Length: 70cm size L", etc.
-      const lengthMatch = text.match(/(?:Total)?(?:lengde|length)[:\s]+(\d{2,3})\s*cm\s+(?:i\s+)?(?:størrelse|size)\s+([A-Z0-9]{1,3})/i);
+      // Handles: "Totallengde: 69 cm i størrelse M", "Length: 70cm size L", "Totallengde: 72 cm", etc.
+      const lengthMatch = text.match(/(?:Total)?(?:lengde|length)[:\s]+(\d{2,3})\s*cm(?:\s+(?:i\s+)?(?:størrelse|size)\s+([A-Z0-9]{1,3}))?/i);
       if (lengthMatch) {
         measurement.itemLength = parseInt(lengthMatch[1]);
-        measurement.itemLengthSize = lengthMatch[2].toUpperCase();
-        console.log(`PerFit [Zalando]: ✅ Item length extracted: ${measurement.itemLength}cm in size ${measurement.itemLengthSize}`);
+        // Size is optional - some products just say "Totallengde: 72 cm"
+        if (lengthMatch[2]) {
+          measurement.itemLengthSize = lengthMatch[2].toUpperCase();
+          console.log(`PerFit [Zalando]: ✅ Item length extracted: ${measurement.itemLength}cm in size ${measurement.itemLengthSize}`);
+        } else {
+          console.log(`PerFit [Zalando]: ✅ Item length extracted: ${measurement.itemLength}cm (no specific size mentioned)`);
+        }
       }
       
       // Detect ankle length items
@@ -156,10 +204,25 @@ export class ZalandoProvider extends BaseStoreProvider {
         console.log("PerFit [Zalando]: ✅ Ankle length item detected");
       }
       
-      // Require at least model size for valid measurement
-      if (!measurement.modelSize) {
-        console.warn("PerFit [Zalando]: ❌ Could not extract model size - aborting text-based measurement");
+      // Extract fit hint if available (for text-based recommendations)
+      const fitHint = this.extractFitHint();
+      if (fitHint) {
+        (measurement as any).fitHint = fitHint;
+        const hintType = fitHint === 'liten' ? 'SMALL' : 'LARGE';
+        console.log(`PerFit [Zalando]: ✅ Fit hint detected: ${hintType}`);
+      }
+      
+      // CHANGED: No longer require modelSize - return if we have ANY useful data
+      // This allows fallback logic in RecommendationEngine to use chest measurements
+      const hasUsefulData = measurement.modelHeight || measurement.itemLength || measurement.modelSize;
+      
+      if (!hasUsefulData) {
+        console.warn("PerFit [Zalando]: ❌ No useful measurement data found (no height, length, or size)");
         return null;
+      }
+      
+      if (!measurement.modelSize) {
+        console.log("PerFit [Zalando]: ⚠️ Model size missing, but returning other data (height/length) for fallback logic");
       }
       
       console.log("PerFit [Zalando]: ✅ Text measurement extraction complete:", measurement);
@@ -287,6 +350,7 @@ export class ZalandoProvider extends BaseStoreProvider {
 
   /**
    * Open Zalando's size guide - Simplified
+   * Returns true if Passform section exists (even if size table button is missing)
    */
   async openSizeGuide(): Promise<boolean> {
     try {
@@ -324,8 +388,9 @@ export class ZalandoProvider extends BaseStoreProvider {
       }
       
       if (!openTableSpan) {
-        console.error("PerFit [Zalando]: Could not find size guide button (tried: 'Åpne størrelsestabell', 'størrelsesguide', 'tabell')");
-        return false;
+        console.log("PerFit [Zalando]: No size table button found - product likely uses text-based measurements only");
+        // Return TRUE to allow text-based scraping to proceed
+        return true;
       }
 
       console.log("PerFit [Zalando]: Found size guide button, clicking...");
