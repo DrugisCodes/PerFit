@@ -48,7 +48,7 @@ export function analyzeLengthFit(
 
   // LOWERED THRESHOLD: Model is significantly taller (> 6cm)
   if (heightDiff > 6) {
-    const warning = `⚠️ Modellen er ${heightDiff} cm høyere enn deg. Selv om vidden passer, kan plagget føles lenger på deg.`;
+    const warning = `Model is ${heightDiff}cm taller than you. Even if the width fits, the garment may feel longer on you.`;
     console.log("PerFit [Length Analysis]: ⚠️ WARNING triggered:", warning);
     return warning;
   }
@@ -56,7 +56,7 @@ export function analyzeLengthFit(
   // LOWERED THRESHOLD: User is significantly taller (> 6cm)
   if (heightDiff < -6) {
     const userTaller = Math.abs(heightDiff);
-    const warning = `⚠️ Du er ${userTaller} cm høyere enn modellen. Plagget kan oppleves kortere på deg.`;
+    const warning = `You are ${userTaller}cm taller than the model. The garment may feel shorter on you.`;
     console.log("PerFit [Length Analysis]: ⚠️ WARNING triggered:", warning);
     return warning;
   }

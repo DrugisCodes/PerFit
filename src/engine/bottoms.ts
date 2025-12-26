@@ -40,12 +40,12 @@ export function calculateBottomRecommendation(
   if (fitHint?.toLowerCase().includes('liten')) {
     userWaist += 2; // Gå opp en størrelse
     userHip += 2;
-    sizeAdjustmentNote = '✨ Vi har valgt en størrelse opp fordi varen er liten i størrelsen';
+    sizeAdjustmentNote = 'Sized up because item runs small';
     console.log(`PerFit [BOTTOM]: Item runs SMALL - adjusting waist from ${originalWaist}cm to ${userWaist}cm`);
   } else if (fitHint?.toLowerCase().includes('stor')) {
     userWaist -= 2; // Gå ned en størrelse
     userHip -= 2;
-    sizeAdjustmentNote = '✨ Vi har valgt en størrelse ned fordi varen er stor i størrelsen';
+    sizeAdjustmentNote = 'Sized down because item runs large';
     console.log(`PerFit [BOTTOM]: Item runs LARGE - adjusting waist from ${originalWaist}cm to ${userWaist}cm`);
   }
 
@@ -72,7 +72,7 @@ export function calculateBottomRecommendation(
       
       if (wxlMatch) {
         console.log(`PerFit [BOTTOM WxL]: ✓ Eksakt match funnet: ${wxlMatch}`);
-        let fitNote = '✨ Eksakt match på tommer (WxL)';
+        let fitNote = 'Exact inch match (WxL)';
         if (sizeAdjustmentNote) {
           fitNote = sizeAdjustmentNote + ' • ' + fitNote;
         }
@@ -118,12 +118,12 @@ export function calculateBottomRecommendation(
       if (bestSize && (bestWaistDiff <= 2 || bestInseamDiff <= 2)) {
         console.log(`PerFit [BOTTOM WxL]: ✓ Nærmeste match funnet: ${bestSize} (midje ±${bestWaistDiff}", innerben ±${bestInseamDiff}")`);
         
-        let fitNote = '📏 Nærmeste match i WxL-format';
+        let fitNote = 'Closest WxL match';
         if (bestWaistDiff > 0) {
-          fitNote += ` (midje ${bestWaistDiff}" forskjell)`;
+          fitNote += ` (waist ${bestWaistDiff}" difference)`;
         }
         if (bestInseamDiff > 0) {
-          fitNote += ` (lengde ${bestInseamDiff}" forskjell)`;
+          fitNote += ` (length ${bestInseamDiff}" difference)`;
         }
         if (sizeAdjustmentNote) {
           fitNote = sizeAdjustmentNote + ' • ' + fitNote;
@@ -159,17 +159,17 @@ export function calculateBottomRecommendation(
       if (userInseam && size.inseam) {
         const diff = size.inseam - userInseam;
         if (textData?.isAnkleLength) {
-          fitNote = '✨ Designet for å slutte ved ankelen';
+          fitNote = 'Designed to end at the ankle';
         } else if (diff < -3) {
-          fitNote = '⚠️ Denne kan bli litt kort i beina';
+          fitNote = 'May be slightly short in the legs';
         } else if (diff > 5) {
-          fitNote = '📏 Buksen er lang, men kan legges opp';
+          fitNote = 'Pants are long, can be hemmed';
         }
       }
 
       // Stretch-advarsel
       if (textData?.stretch === 0 && size.waist === userWaist) {
-        fitNote += ' (Ingen stretch - kan føles trang)';
+        fitNote += ' (No stretch - may feel tight)';
       }
 
       // Legg til size adjustment note hvis det finnes

@@ -9,6 +9,7 @@
  */
 
 import { SizeRecommendation, GarmentCategory } from '../stores/types';
+import { formatDisplaySize } from '../utils/math';
 
 // Track if menu is being opened (to prevent immediate click-outside closure)
 let isOpeningMenu = false;
@@ -90,10 +91,10 @@ export function showRecommendation(recommendation: SizeRecommendation): void {
 
   // Category emoji
   const categoryEmoji: Record<GarmentCategory, string> = {
-    'top': '👕',
-    'bottom': '👖',
-    'shoes': '👟',
-    'unknown': '👔'
+    'top': '',
+    'bottom': '',
+    'shoes': '',
+    'unknown': ''
   };
 
   // Build message based on category
@@ -111,12 +112,12 @@ export function showRecommendation(recommendation: SizeRecommendation): void {
       ? `Table: ${recommendation.matchedRow.waist}cm waist / ${recommendation.matchedRow.hip}cm hip` 
       : '';
     if (recommendation.fitNote) {
-      tableInfo += `<br><span style="color: #48bb78; font-weight: bold;">${recommendation.fitNote}</span>`;
+      tableInfo += `<br><span style="color: #FFC107; font-weight: bold;">${recommendation.fitNote}</span>`;
     }
   } else if (recommendation.category === 'shoes') {
-    measurementText = `Din fotlengde: ${recommendation.userChest}cm`;
+    measurementText = `Your foot length: ${recommendation.userChest}cm`;
     if (recommendation.fitNote) {
-      tableInfo = `<span style="color: #48bb78; font-weight: bold;">${recommendation.fitNote}</span>`;
+      tableInfo = `<span style="color: #FFC107; font-weight: bold;">${recommendation.fitNote}</span>`;
     }
   } else {
     measurementText = `Your measurement: ${recommendation.userChest}cm`;
@@ -127,27 +128,29 @@ export function showRecommendation(recommendation: SizeRecommendation): void {
   const isDual = recommendation.isDual;
   
   if (isDual && recommendation.secondarySize) {
-    // Visning for to størrelser ved siden av hverandre
+    // Dual size display - side by side
+    // Primary (left): Snug Fit - recommended for slip-ons as leather stretches
+    // Secondary (right): Best Fit - technical match, may feel loose over time
     sizeDisplayHtml = `
       <div style="display: flex; gap: 12px; justify-content: center; margin-bottom: 15px;">
         <div style="flex: 1; background: rgba(255,255,255,0.15); padding: 12px; border-radius: 12px; border: 2px solid #fff; text-align: center;">
-          <div style="font-size: 28px; font-weight: bold;">${recommendation.size}</div>
-          <div style="font-size: 10px; font-weight: bold; text-transform: uppercase; margin-top: 4px;">Tettsitt.</div>
-          <div style="font-size: 9px; opacity: 0.9;">(Anbefalt)</div>
+          <div style="font-size: 28px; font-weight: bold;">${formatDisplaySize(recommendation.size)}</div>
+          <div style="font-size: 10px; font-weight: bold; text-transform: uppercase; margin-top: 4px;">Snug Fit</div>
+          <div style="font-size: 9px; opacity: 0.9;">(Recommended)</div>
         </div>
         
         <div style="flex: 1; background: rgba(255,255,255,0.05); padding: 12px; border-radius: 12px; border: 1px dashed rgba(255,255,255,0.5); opacity: 0.8; text-align: center;">
-          <div style="font-size: 28px; font-weight: bold;">${recommendation.secondarySize}</div>
-          <div style="font-size: 10px; font-weight: bold; text-transform: uppercase; margin-top: 4px;">Komfortab.</div>
-          <div style="font-size: 9px; opacity: 0.9;">(Kan utv.)</div>
+          <div style="font-size: 28px; font-weight: bold;">${formatDisplaySize(recommendation.secondarySize!)}</div>
+          <div style="font-size: 10px; font-weight: bold; text-transform: uppercase; margin-top: 4px;">Best Fit</div>
+          <div style="font-size: 9px; opacity: 0.9;">(May be loose)</div>
         </div>
       </div>
     `;
   } else {
-    // Standard visning for én størrelse
+    // Standard single size display
     sizeDisplayHtml = `
       <div style="font-size: 48px; font-weight: bold; margin-bottom: 8px; text-shadow: 0 2px 8px rgba(0,0,0,0.3);">
-        ${recommendation.size}
+        ${formatDisplaySize(recommendation.size)}
       </div>
     `;
   }
@@ -182,7 +185,7 @@ export function showRecommendation(recommendation: SizeRecommendation): void {
     <div style="text-align: center; padding: 10px 0;">
       ${sizeDisplayHtml}
       <div style="font-size: 16px; font-weight: bold; letter-spacing: 1.5px; margin-bottom: 16px; opacity: 0.95;">
-        ⭐ PerFit Match
+        PerFit Match
       </div>
       <div style="font-size: 13px; opacity: 0.9; line-height: 1.5; margin-top: 12px;">
         ${categoryEmoji[recommendation.category]} ${measurementText}
@@ -194,7 +197,7 @@ export function showRecommendation(recommendation: SizeRecommendation): void {
       ` : ''}
       ${isDual ? `
         <div style="font-size: 11px; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px; line-height: 1.4; text-align: left; margin-top: 12px;">
-          💡 <strong>Skinn utvider seg over tid.</strong> Vi anbefaler den minste størrelsen for å unngå at skoen glipper i hælen senere.
+          <strong>Leather stretches over time.</strong> We recommend the Snug Fit to prevent heel slip later.
         </div>
       ` : ''}
       ${recommendation.lengthNote ? `
@@ -210,7 +213,7 @@ export function showRecommendation(recommendation: SizeRecommendation): void {
           font-weight: 500;
           text-shadow: 0 1px 3px rgba(0,0,0,0.3);
         ">
-          📏 ${recommendation.lengthNote}
+          ${recommendation.lengthNote}
         </div>
       ` : ''}
     </div>
@@ -396,79 +399,67 @@ export function showActionMenu(
           padding-right: 8px;
         ">
           <div>
-            <label style="display: block; color: #374151; font-size: 13px; font-weight: 500; margin-bottom: 4px;">👔 Chest (cm)</label>
+            <label style="display: block; color: #374151; font-size: 13px; font-weight: 500; margin-bottom: 4px;">Chest (cm)</label>
             <input id="input-chest" type="number" value="${profile.chest || ''}" style="
               width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px;
               font-size: 14px; box-sizing: border-box;
             ">
           </div>
           <div>
-            <label style="display: block; color: #374151; font-size: 13px; font-weight: 500; margin-bottom: 4px;">📏 Waist (cm)</label>
+            <label style="display: block; color: #374151; font-size: 13px; font-weight: 500; margin-bottom: 4px;">Waist (cm)</label>
             <input id="input-waist" type="number" value="${profile.waist || ''}" style="
               width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px;
               font-size: 14px; box-sizing: border-box;
             ">
           </div>
           <div>
-            <label style="display: block; color: #374151; font-size: 13px; font-weight: 500; margin-bottom: 4px;">👖 Hip (cm)</label>
+            <label style="display: block; color: #374151; font-size: 13px; font-weight: 500; margin-bottom: 4px;">Hip (cm)</label>
             <input id="input-hip" type="number" value="${profile.hip || ''}" style="
               width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px;
               font-size: 14px; box-sizing: border-box;
             ">
           </div>
           <div>
-            <label style="display: block; color: #374151; font-size: 13px; font-weight: 500; margin-bottom: 4px;">💪 Arm Length (cm)</label>
+            <label style="display: block; color: #374151; font-size: 13px; font-weight: 500; margin-bottom: 4px;">Arm Length (cm)</label>
             <input id="input-armLength" type="number" value="${profile.armLength || ''}" style="
               width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px;
               font-size: 14px; box-sizing: border-box;
             ">
           </div>
           <div>
-            <label style="display: block; color: #374151; font-size: 13px; font-weight: 500; margin-bottom: 4px;">🦵 Inseam / Inside Leg (cm)</label>
+            <label style="display: block; color: #374151; font-size: 13px; font-weight: 500; margin-bottom: 4px;">Inseam / Inside Leg (cm)</label>
             <input id="input-inseam" type="number" value="${profile.inseam || ''}" style="
               width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px;
               font-size: 14px; box-sizing: border-box;
             ">
           </div>
           <div>
-            <label style="display: block; color: #374151; font-size: 13px; font-weight: 500; margin-bottom: 4px;">📐 Torso Length (cm)</label>
+            <label style="display: block; color: #374151; font-size: 13px; font-weight: 500; margin-bottom: 4px;">Torso Length (cm)</label>
             <input id="input-torsoLength" type="number" value="${profile.torsoLength || ''}" style="
               width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px;
               font-size: 14px; box-sizing: border-box;
             ">
           </div>
           <div>
-            <label style="display: block; color: #374151; font-size: 13px; font-weight: 500; margin-bottom: 4px;">📏 Height / Høyde (cm)</label>
+            <label style="display: block; color: #374151; font-size: 13px; font-weight: 500; margin-bottom: 4px;">Height (cm)</label>
             <input id="input-height" type="number" value="${profile.height || ''}" style="
               width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px;
               font-size: 14px; box-sizing: border-box;
             ">
           </div>
           <div>
-            <label style="display: block; color: #374151; font-size: 13px; font-weight: 500; margin-bottom: 4px;">📏 Foot Length (cm)</label>
+            <label style="display: block; color: #374151; font-size: 13px; font-weight: 500; margin-bottom: 4px;">Foot Length (cm)</label>
             <input id="input-footLength" type="number" value="${profile.footLength || ''}" style="
               width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px;
               font-size: 14px; box-sizing: border-box;
             ">
           </div>
           <div>
-            <label style="display: block; color: #374151; font-size: 13px; font-weight: 500; margin-bottom: 4px;">👟 Shoe Size (Optional)</label>
+            <label style="display: block; color: #374151; font-size: 13px; font-weight: 500; margin-bottom: 4px;">Shoe Size (Optional)</label>
             <input id="input-shoeSize" type="text" value="${profile.shoeSize || ''}" style="
               width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px;
               font-size: 14px; box-sizing: border-box;
             ">
-          </div>
-          <div>
-            <label style="display: block; color: #374151; font-size: 13px; font-weight: 500; margin-bottom: 4px;">🦶 Foot Width / Fotbredde</label>
-            <select id="input-footWidth" style="
-              width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px;
-              font-size: 14px; box-sizing: border-box; background: white;
-            ">
-              <option value="" ${!profile.footWidth ? 'selected' : ''}>-- Velg --</option>
-              <option value="narrow" ${profile.footWidth === 'narrow' ? 'selected' : ''}>Smal</option>
-              <option value="average" ${profile.footWidth === 'average' ? 'selected' : ''}>Normal</option>
-              <option value="wide" ${profile.footWidth === 'wide' ? 'selected' : ''}>Bred</option>
-            </select>
           </div>
         </div>
 
@@ -492,7 +483,6 @@ export function showActionMenu(
         const height = (shadow.getElementById('input-height') as HTMLInputElement)?.value;
         const footLength = (shadow.getElementById('input-footLength') as HTMLInputElement)?.value;
         const shoeSize = (shadow.getElementById('input-shoeSize') as HTMLInputElement)?.value;
-        const footWidth = (shadow.getElementById('input-footWidth') as HTMLSelectElement)?.value as 'narrow' | 'average' | 'wide' | '';
 
         // Update profile in storage
         const updatedProfile = {
@@ -505,8 +495,7 @@ export function showActionMenu(
           torsoLength,
           height,
           footLength,
-          shoeSize,
-          footWidth: footWidth || undefined // Don't save empty string
+          shoeSize
         };
 
         await chrome.storage.local.set({ userProfile: updatedProfile });

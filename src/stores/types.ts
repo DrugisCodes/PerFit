@@ -52,7 +52,6 @@ export interface UserProfile {
   height: string;         // Height in cm (for text-based matching)
   footLength?: string;    // Foot length in cm (for shoe matching)
   fitPreference?: number; // 1-10, where 5 is regular fit
-  footWidth?: 'narrow' | 'average' | 'wide'; // Foot width category for shoe sizing
   // volumentalId?: string; // Future: Volumental API integration for 3D foot scan data
 }
 

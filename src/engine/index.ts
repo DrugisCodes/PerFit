@@ -8,7 +8,7 @@
 import { SizeRow, UserProfile, SizeRecommendation, GarmentCategory } from '../stores/types';
 import { calculateTopRecommendation, calculateTextBasedRecommendation } from './tops';
 import { calculateBottomRecommendation } from './bottoms';
-import { calculateShoeRecommendation } from './shoes';
+import { calculateShoeRecommendation } from './shoes/index';
 
 /**
  * Calculate size recommendation based on user profile and size data

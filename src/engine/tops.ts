@@ -102,17 +102,17 @@ export function calculateTopRecommendation(
   // === STEP 5: Build fitNote ===
   if (usedLeeway) {
     const gap = effectiveChest - bestMatch.chest;
-    fitNote = `✨ Valgt ${bestMatch.intSize} pga. marginal differanse (${gap.toFixed(1)}cm)`;
+    fitNote = `Chose ${bestMatch.intSize} due to marginal difference (${gap.toFixed(1)}cm)`;
     
     if (modelSimilarity && textMeasurement?.modelSize) {
-      fitNote += ` og modell-likhet (høyde ±${heightDiff}cm)`;
+      fitNote += ` and model similarity (height ±${heightDiff}cm)`;
     } else if (fitHint?.toLowerCase().includes('stor')) {
-      fitNote += ` og fordi varen er stor i størrelsen`;
+      fitNote += ` and because item runs large`;
     }
   } else if (fitHint?.toLowerCase().includes('stor')) {
-    fitNote = `Justert ned pga. 'varen er stor' (${userChest}cm → ${effectiveChest}cm effektiv)`;
+    fitNote = `Sized down for 'runs large' (${userChest}cm → ${effectiveChest}cm effective)`;
   } else if (fitHint?.toLowerCase().includes('liten')) {
-    fitNote = `Justert opp pga. 'varen er liten' (${userChest}cm → ${effectiveChest}cm effektiv)`;
+    fitNote = `Sized up for 'runs small' (${userChest}cm → ${effectiveChest}cm effective)`;
   }
 
   console.log(`PerFit [TOP]: ✅ Final recommendation: Size ${bestMatch.intSize} (table: ${bestMatch.chest}cm, user: ${userChest}cm, effective: ${effectiveChest}cm, leeway used: ${usedLeeway})`);
@@ -199,18 +199,18 @@ export function calculateTextBasedRecommendation(
         // If chest is at M/L boundary (100-105cm), stay at M for relaxed fit
         if (userChest && userChest >= 100 && userChest < 106 && recommendedIndex === sizeScale.indexOf('M')) {
           console.log(`PerFit [Text]: Staying at M despite 'stor' hint - chest ${userChest}cm needs M for relaxed fit`);
-          fitNote = `Valgt Medium pga. brystmål (${userChest}cm) og fordi varen er stor i størrelsen (vil sitte Relaxed)`;
+          fitNote = `Chose Medium for chest (${userChest}cm) and because item runs large (will fit Relaxed)`;
         } else if (recommendedIndex > sizeScale.indexOf('M')) {
           // Can safely go down if we're above M
           recommendedIndex -= 1;
           console.log(`PerFit [Text]: Going down 1 size due to 'stor' hint → ${sizeScale[recommendedIndex]}`);
-          fitNote = `Valgt ${sizeScale[recommendedIndex]} fordi varen er stor i størrelsen`;
+          fitNote = `Chose ${sizeScale[recommendedIndex]} because item runs large`;
         }
       } else if (fitHint === 'liten' && recommendedIndex > 0) {
         // Item runs small - go up a size
         recommendedIndex += 1;
         console.log(`PerFit [Text]: Item runs SMALL - going up 1 size → ${sizeScale[recommendedIndex]}`);
-        fitNote = `Valgt ${sizeScale[recommendedIndex]} fordi varen er liten i størrelsen`;
+        fitNote = `Chose ${sizeScale[recommendedIndex]} because item runs small`;
       }
     }
     
@@ -224,13 +224,13 @@ export function calculateTextBasedRecommendation(
         console.log(`PerFit [Text]: User significantly shorter (${heightDiff}cm) - confirms smaller size to avoid length issues`);
         // Don't adjust further if chest already determined size, just note it
         if (chestBasedStart && !fitNote) {
-          fitNote = `Valgt ${sizeScale[recommendedIndex]} pga. brystmål (${userChest}cm). Høydeforskjell på ${Math.abs(heightDiff)}cm bekrefter valget`;
+          fitNote = `Chose ${sizeScale[recommendedIndex]} for chest (${userChest}cm). Height difference of ${Math.abs(heightDiff)}cm confirms choice`;
         }
       } else if (heightDiff > 10 && recommendedIndex < sizeScale.length - 1) {
         console.log(`PerFit [Text]: User significantly taller (+${heightDiff}cm) - may need to consider size up`);
         // Only suggest if chest doesn't prevent it
         if (!chestBasedStart && !fitNote) {
-          fitNote = `Basert på høydeforskjell (+${heightDiff}cm)`;
+          fitNote = `Based on height difference (+${heightDiff}cm)`;
         }
       }
     }
@@ -245,7 +245,7 @@ export function calculateTextBasedRecommendation(
       console.log(`PerFit [Text]: Ideal garment length: ${idealGarmentLength}cm, Actual: ${textData.itemLength}cm, Diff: ${lengthDiff}cm`);
       
       if (Math.abs(lengthDiff) > 8) {
-        fitNote = `Basert på totallengde ${textData.itemLength}cm vs din torso ${userTorso}cm`;
+        fitNote = `Based on total length ${textData.itemLength}cm vs your torso ${userTorso}cm`;
       }
     }
     
@@ -269,9 +269,9 @@ export function calculateTextBasedRecommendation(
         
         const heightDiff = textData.modelHeight && userHeight ? Math.abs(textData.modelHeight - userHeight) : 0;
         if (heightDiff > 0 && !fitNote) {
-          fitNote = `Anbefalt Medium pga. brystmål (${userChest}cm), til tross for høydeforskjell på ${heightDiff}cm`;
+          fitNote = `Recommending Medium for chest (${userChest}cm), despite height difference of ${heightDiff}cm`;
         } else if (!fitNote) {
-          fitNote = `Anbefalt Medium for å sikre god passform over skuldre og bryst (${userChest}cm)`;
+          fitNote = `Recommending Medium to ensure proper fit across shoulders and chest (${userChest}cm)`;
         }
       }
     }
@@ -290,7 +290,7 @@ export function calculateTextBasedRecommendation(
       userChest: userChest || userHeight,
       targetChest: userChest || userHeight,
       buffer: 0,
-      fitNote: fitNote || `Basert på brystmål (${userChest}cm)`
+      fitNote: fitNote || `Based on chest measurement (${userChest}cm)`
     };
   } catch (error) {
     console.error("PerFit [Text]: Error calculating text-based recommendation:", error);

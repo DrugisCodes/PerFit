@@ -298,7 +298,7 @@ export const Popup = () => {
         {/* Manual Stretch Override (only for shoes) */}
         {isZalandoPage && category === 'shoes' && (
           <div className="w-full mb-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
-            <p className="text-xs text-gray-700 font-medium mb-2">Utvider denne skoen seg?</p>
+            <p className="text-xs text-gray-700 font-medium mb-2">Does this shoe stretch?</p>
             <label className="flex items-center cursor-pointer">
               <input
                 type="checkbox"
@@ -306,7 +306,7 @@ export const Popup = () => {
                 onChange={(e) => handleManualStretchToggle(e.target.checked)}
                 className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 focus:ring-2"
               />
-              <span className="ml-2 text-xs text-gray-600">Skinn / Loafer (anbefaler tettere passform)</span>
+              <span className="ml-2 text-xs text-gray-600">Leather / Loafer (recommend snug fit)</span>
             </label>
           </div>
         )}

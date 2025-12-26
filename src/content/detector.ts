@@ -20,9 +20,15 @@ export function detectCategoryFromPage(): string | null {
     // First, get product name from H1 to check for exclusion words
     const h1Text = document.querySelector('h1')?.textContent?.toLowerCase() || '';
     
-    // Exclusion words: If product is a boot, don't flag as moccasin
+    // Exclusion words: If product is a boot or sneaker, don't flag as moccasin
     const bootExclusionWords = ['boot', 'boots', 'støvel', 'støvler', 'støvlett', 'støvletter', 'chelsea', 'ankle boot'];
+    const sneakerExclusionWords = ['sneaker', 'sneakers', 'joggesko', 'joggesko', 'treningssko', 'trainer', 'trainers'];
+    
     const isBootProduct = bootExclusionWords.some(word => h1Text.includes(word));
+    const isSneakerProduct = sneakerExclusionWords.some(word => h1Text.includes(word) || url.includes(word));
+    
+    // Combined exclusion check - sneakers and boots should never be moccasins
+    const shouldExcludeMoccasin = isBootProduct || isSneakerProduct;
     
     // Moccasin keywords to search for
     const moccasinKeywords = ['mokkasinsøm', 'loafers', 'loafer', 'mokkasin', 'moccasin', 'penny loafer', 'driving shoe'];
@@ -31,7 +37,7 @@ export function detectCategoryFromPage(): string | null {
     const leatherKeywords = ['lær', 'skinn', 'leather', 'nubuck', 'semsket'];
     
     // Lace keywords for boot differentiation
-    const laceKeywords = ['snøre', 'snøring', 'lace', 'laces', 'laced', 'snørings'];
+    const laceKeywords = ['snøre', 'snøring', 'lace', 'laces', 'laced', 'snørings', 'lisser', 'skolisser'];
     
     let isMoccasin = false;
     let isLeatherBoot = false;
@@ -74,8 +80,20 @@ export function detectCategoryFromPage(): string | null {
     // Check for leather in product
     const hasLeather = leatherKeywords.some(word => targetText.includes(word));
     
+    // === STEP 1: LACE DETECTION FIRST ===
+    // Check for laces BEFORE moccasin detection - laces override moccasin detection
+    for (const keyword of laceKeywords) {
+      if (targetText.includes(keyword) || h1Text.includes(keyword)) {
+        hasLaces = true;
+        console.log('PerFit: Lisser/snøring funnet - behandles som sko med snøring!', keyword);
+        break;
+      }
+    }
+    
+    // === STEP 2: MOCCASIN DETECTION (with exclusions) ===
     // Check for moccasin keywords (only in targeted text, not entire page)
-    if (!isBootProduct) {
+    // Skip if: product is boot, sneaker, OR has laces
+    if (!shouldExcludeMoccasin && !hasLaces) {
       for (const keyword of moccasinKeywords) {
         if (targetText.includes(keyword) || h1Text.includes(keyword)) {
           isMoccasin = true;
@@ -83,26 +101,42 @@ export function detectCategoryFromPage(): string | null {
           break;
         }
       }
-    } else {
-      console.log('PerFit: Produktnavn indikerer støvel - ignorerer loafer-keywords fra relaterte produkter');
+    } else if (shouldExcludeMoccasin) {
+      // Check if mokkasinsøm was present but ignored
+      const hasMoccasinKeyword = moccasinKeywords.some(keyword => 
+        targetText.includes(keyword) || h1Text.includes(keyword)
+      );
+      if (hasMoccasinKeyword) {
+        if (isSneakerProduct) {
+          console.log('PerFit: Mokkasinsøm funnet, men ignorert pga. sneaker-kategori');
+        } else {
+          console.log('PerFit: Mokkasinsøm funnet, men ignorert pga. støvel-kategori');
+        }
+      }
       
-      // Check if it's a leather boot
-      if (hasLeather) {
-        isLeatherBoot = true;
-        console.log('PerFit: Detektert som lærstøvel');
+      // Handle boot detection if it's a boot (not sneaker)
+      if (isBootProduct && !isSneakerProduct) {
+        console.log('PerFit: Produktnavn indikerer støvel - ignorerer loafer-keywords');
         
-        // Check if boot has laces
-        for (const keyword of laceKeywords) {
-          if (targetText.includes(keyword) || h1Text.includes(keyword)) {
-            hasLaces = true;
-            console.log('PerFit: Støvel med snøring funnet!', keyword);
-            break;
+        // Check if it's a leather boot
+        if (hasLeather) {
+          isLeatherBoot = true;
+          console.log('PerFit: Detektert som lærstøvel');
+          
+          if (!hasLaces) {
+            console.log('PerFit: Støvel uten snøring (Chelsea-type) - bruker tettsittende logikk');
+          } else {
+            console.log('PerFit: Støvel med snøring funnet');
           }
         }
-        
-        if (!hasLaces) {
-          console.log('PerFit: Støvel uten snøring (Chelsea-type) - bruker tettsittende logikk');
-        }
+      }
+    } else if (hasLaces) {
+      // Laces found - log if moccasin keyword was present
+      const hasMoccasinKeyword = moccasinKeywords.some(keyword => 
+        targetText.includes(keyword) || h1Text.includes(keyword)
+      );
+      if (hasMoccasinKeyword) {
+        console.log('PerFit: Mokkasinsøm funnet, men ignorert pga. lisser/snøring');
       }
     }
     
