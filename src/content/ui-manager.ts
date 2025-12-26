@@ -1,91 +1,47 @@
-// TOP-LEVEL GUARD: Exit immediately if not a product page (BEFORE any imports)
-const pathname = window.location.pathname.toLowerCase();
-if ((!pathname.includes(".html") && !pathname.includes("/p/")) || pathname.includes("-home")) {
-  throw new Error("PerFit: Not a product page, aborting.");
+/**
+ * PerFit Content Script - UI Manager Module
+ * 
+ * Handles all UI-related functions:
+ * - Shadow DOM injection
+ * - Recommendation display
+ * - Action menu (start view and edit view)
+ * - UI removal
+ */
+
+import { SizeRecommendation, GarmentCategory } from '../stores/types';
+
+// Track if menu is being opened (to prevent immediate click-outside closure)
+let isOpeningMenu = false;
+
+/**
+ * Helper function to prevent immediate closure when opening menu
+ */
+export function setMenuOpening(): void {
+  isOpeningMenu = true;
+  setTimeout(() => {
+    isOpeningMenu = false;
+  }, 300); // Increased from 100ms to 300ms to prevent immediate closure
 }
 
 /**
- * PerFit Content Script - Simplified Version
- * 
- * Direct DOM injection without Shadow DOM complexity.
- * Focuses on reliable dropdown scraping and size matching.
+ * Check if menu is currently being opened
  */
-
-import { detectProvider } from '../stores';
-import { UserProfile, SizeRecommendation, GarmentCategory } from '../stores/types';
-import { calculateRecommendation, calculateTextBasedRecommendation } from './RecommendationEngine';
+export function getIsOpeningMenu(): boolean {
+  return isOpeningMenu;
+}
 
 /**
- * Cached recommendation for Resume State pattern
- * Stores the last successful size recommendation to avoid re-scraping
+ * Reset the menu opening flag
  */
-let cachedRecommendation: SizeRecommendation | null = null;
-
-/**
- * Analyze length/height fit between user and model
- * 
- * Compares user's height against model's height to detect significant mismatches.
- * Returns a warning message if the garment may be too long or too short.
- * 
- * @param userProfile - User's body measurements including height
- * @param textData - Scraped text measurements from product page (model info)
- * @param recommendedSize - The recommended size (for future size-based length adjustments)
- * @returns Warning message string or null if no significant mismatch
- */
-function analyzeLengthFit(
-  userProfile: UserProfile,
-  textData: any,
-  _recommendedSize: string // Reserved for future size-based length adjustments
-): string | null {
-  // Guard: Need both user height and model height
-  if (!userProfile.height || !textData || !textData.modelHeight) {
-    console.log("PerFit [Length Analysis]: Missing height data - skipping analysis");
-    return null;
-  }
-
-  // ROBUST CASTING: Handle both string ("177") and number (177) inputs
-  const userHeight = Number(userProfile.height);
-  const modelHeight = Number(textData.modelHeight);
-  
-  // Validate parsed values
-  if (isNaN(userHeight) || isNaN(modelHeight) || userHeight <= 0 || modelHeight <= 0) {
-    console.warn("PerFit [Length Analysis]: Invalid height values:", {
-      userHeight: userProfile.height,
-      modelHeight: textData.modelHeight
-    });
-    return null;
-  }
-
-  // Calculate height difference (positive = model is taller)
-  const heightDiff = modelHeight - userHeight;
-  
-  console.log(`PerFit [Length Analysis]: User ${userHeight}cm vs Model ${modelHeight}cm (diff: ${heightDiff > 0 ? '+' : ''}${heightDiff}cm)`);
-
-  // LOWERED THRESHOLD: Model is significantly taller (> 6cm)
-  if (heightDiff > 6) {
-    const warning = `⚠️ Modellen er ${heightDiff} cm høyere enn deg. Selv om vidden passer, kan plagget føles lenger på deg.`;
-    console.log("PerFit [Length Analysis]: ⚠️ WARNING triggered:", warning);
-    return warning;
-  }
-
-  // LOWERED THRESHOLD: User is significantly taller (> 6cm)
-  if (heightDiff < -6) {
-    const userTaller = Math.abs(heightDiff);
-    const warning = `⚠️ Du er ${userTaller} cm høyere enn modellen. Plagget kan oppleves kortere på deg.`;
-    console.log("PerFit [Length Analysis]: ⚠️ WARNING triggered:", warning);
-    return warning;
-  }
-
-  // No significant height difference
-  console.log("PerFit [Length Analysis]: ✅ Height difference within acceptable range (±6cm)");
-  return null;
+export function resetMenuOpening(): void {
+  isOpeningMenu = false;
 }
 
 /**
  * Inject UI element into isolated Shadow DOM container
  * Uses React Root Sibling strategy to avoid hydration collisions
  */
-const injectIsolatedUI = (element: HTMLElement, hostId: string): void => {
+export function injectIsolatedUI(element: HTMLElement, hostId: string): void {
   // Use requestIdleCallback to avoid collision with React startup
   (window.requestIdleCallback || window.setTimeout)(() => {
     let host = document.getElementById(hostId);
@@ -116,13 +72,13 @@ const injectIsolatedUI = (element: HTMLElement, hostId: string): void => {
       host.shadowRoot?.replaceChildren(element);
     }
   });
-};
+}
 
 /**
  * Show size recommendation popup
  * Simple direct injection into document.body
  */
-function showRecommendation(recommendation: SizeRecommendation): void {
+export function showRecommendation(recommendation: SizeRecommendation): void {
   // Prevent immediate closure from click-outside handler
   setMenuOpening();
   
@@ -158,12 +114,42 @@ function showRecommendation(recommendation: SizeRecommendation): void {
       tableInfo += `<br><span style="color: #48bb78; font-weight: bold;">${recommendation.fitNote}</span>`;
     }
   } else if (recommendation.category === 'shoes') {
-    measurementText = `Your foot: ${recommendation.userChest}cm`;
+    measurementText = `Din fotlengde: ${recommendation.userChest}cm`;
     if (recommendation.fitNote) {
       tableInfo = `<span style="color: #48bb78; font-weight: bold;">${recommendation.fitNote}</span>`;
     }
   } else {
     measurementText = `Your measurement: ${recommendation.userChest}cm`;
+  }
+
+  // === DUAL RECOMMENDATION LAYOUT FOR MOCCASINS ===
+  let sizeDisplayHtml = '';
+  const isDual = recommendation.isDual;
+  
+  if (isDual && recommendation.secondarySize) {
+    // Visning for to størrelser ved siden av hverandre
+    sizeDisplayHtml = `
+      <div style="display: flex; gap: 12px; justify-content: center; margin-bottom: 15px;">
+        <div style="flex: 1; background: rgba(255,255,255,0.15); padding: 12px; border-radius: 12px; border: 2px solid #fff; text-align: center;">
+          <div style="font-size: 28px; font-weight: bold;">${recommendation.size}</div>
+          <div style="font-size: 10px; font-weight: bold; text-transform: uppercase; margin-top: 4px;">Tettsitt.</div>
+          <div style="font-size: 9px; opacity: 0.9;">(Anbefalt)</div>
+        </div>
+        
+        <div style="flex: 1; background: rgba(255,255,255,0.05); padding: 12px; border-radius: 12px; border: 1px dashed rgba(255,255,255,0.5); opacity: 0.8; text-align: center;">
+          <div style="font-size: 28px; font-weight: bold;">${recommendation.secondarySize}</div>
+          <div style="font-size: 10px; font-weight: bold; text-transform: uppercase; margin-top: 4px;">Komfortab.</div>
+          <div style="font-size: 9px; opacity: 0.9;">(Kan utv.)</div>
+        </div>
+      </div>
+    `;
+  } else {
+    // Standard visning for én størrelse
+    sizeDisplayHtml = `
+      <div style="font-size: 48px; font-weight: bold; margin-bottom: 8px; text-shadow: 0 2px 8px rgba(0,0,0,0.3);">
+        ${recommendation.size}
+      </div>
+    `;
   }
 
   // Create recommendation box - simple inline styles
@@ -194,9 +180,7 @@ function showRecommendation(recommendation: SizeRecommendation): void {
     </style>
     <span id="perfit-close" style="position: absolute; top: 8px; right: 12px; font-size: 28px; font-weight: bold; color: white; cursor: pointer; opacity: 0.7; line-height: 1; user-select: none;">×</span>
     <div style="text-align: center; padding: 10px 0;">
-      <div style="font-size: 48px; font-weight: bold; margin-bottom: 8px; text-shadow: 0 2px 8px rgba(0,0,0,0.3);">
-        ${recommendation.size}
-      </div>
+      ${sizeDisplayHtml}
       <div style="font-size: 16px; font-weight: bold; letter-spacing: 1.5px; margin-bottom: 16px; opacity: 0.95;">
         ⭐ PerFit Match
       </div>
@@ -206,6 +190,11 @@ function showRecommendation(recommendation: SizeRecommendation): void {
       ${tableInfo ? `
         <div style="font-size: 11px; opacity: 0.85; margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.3);">
           ${tableInfo}
+        </div>
+      ` : ''}
+      ${isDual ? `
+        <div style="font-size: 11px; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px; line-height: 1.4; text-align: left; margin-top: 12px;">
+          💡 <strong>Skinn utvider seg over tid.</strong> Vi anbefaler den minste størrelsen for å unngå at skoen glipper i hælen senere.
         </div>
       ` : ''}
       ${recommendation.lengthNote ? `
@@ -251,182 +240,9 @@ function showRecommendation(recommendation: SizeRecommendation): void {
 }
 
 /**
- * Main execution function - Runs size recommendation logic
- */
-async function runPerFit(): Promise<void> {
-  try {
-    console.log("PerFit: Running recommendation...");
-
-    const provider = detectProvider();
-    if (!provider) {
-      console.log("PerFit: Provider not detected");
-      removeActionMenu();
-      return;
-    }
-
-    // Fetch user profile
-    const result = await chrome.storage.local.get(["userProfile"]);
-    const userProfile: UserProfile = result.userProfile;
-
-    if (!userProfile) {
-      console.log("PerFit: No user profile found");
-      removeActionMenu();
-      return;
-    }
-
-    console.log("PerFit: User profile loaded");
-
-    // Open size guide
-    const opened = await provider.openSizeGuide();
-    if (!opened) {
-      console.error("PerFit: Failed to open size guide");
-      removeActionMenu();
-      return;
-    }
-    // Get fit hint early (needed for text-based fallback)
-    let fitHint: string | undefined;
-    if ('getFitHint' in provider && typeof provider.getFitHint === 'function') {
-      fitHint = (provider as any).getFitHint() || undefined;
-    }
-    // Scrape size data
-    const sizeData = await provider.scrapeTableData();
-    if (sizeData.length === 0) {
-      console.log("PerFit: No table data found, checking for text-based measurements...");
-      
-      // Check if provider has text measurements (Zalando-specific)
-      if ('textMeasurement' in provider && (provider as any).textMeasurement) {
-        const textData = (provider as any).textMeasurement;
-        console.log("PerFit: Using text-based measurements", textData);
-        
-        // Calculate text-based recommendation
-        const recommendation = calculateTextBasedRecommendation(userProfile, textData);
-        
-        if (recommendation) {
-          // Add length/height analysis
-          const lengthWarning = analyzeLengthFit(userProfile, textData, recommendation.size);
-          if (lengthWarning) {
-            recommendation.lengthNote = lengthWarning;
-            console.log("PerFit: Length warning added:", lengthWarning);
-          }
-          
-          cachedRecommendation = recommendation; // Cache text-based result
-          removeActionMenu(); // Remove menu before showing recommendation
-          showRecommendation(recommendation);
-          return;
-        }
-      }
-      
-      console.error("PerFit: No size data or text measurements available");
-      removeActionMenu();
-      return;
-    }
-
-    // Detect category
-    const category = provider.getTableCategory();
-    console.log(`PerFit: Category: ${category}`);
-
-    // Get text measurements if available (for ankle length detection)
-    const textMeasurement = ('textMeasurement' in provider && (provider as any).textMeasurement) 
-      ? (provider as any).textMeasurement 
-      : undefined;
-
-    // Get dropdown sizes if available (for WxL format detection)
-    const dropdownSizes = ('dropdownSizes' in provider && (provider as any).dropdownSizes) 
-      ? (provider as any).dropdownSizes 
-      : undefined;
-
-    // Calculate recommendation (pass textMeasurement for ankle length detection and dropdownSizes for WxL format)
-    const recommendation = calculateRecommendation(userProfile, sizeData, category, fitHint, textMeasurement, dropdownSizes);
-    if (!recommendation) {
-      console.error("PerFit: Failed to calculate recommendation");
-      removeActionMenu();
-      return;
-    }
-
-    // Add length/height analysis (check if provider has text measurements and category is not shoes)
-    if (category !== 'shoes' && textMeasurement) {
-      const lengthWarning = analyzeLengthFit(userProfile, textMeasurement, recommendation.size);
-      if (lengthWarning) {
-        recommendation.lengthNote = lengthWarning;
-        console.log("PerFit: Length warning added:", lengthWarning);
-      }
-    }
-
-    // Highlight row
-    if (recommendation.matchedRow && recommendation.matchedRow.rowIndex !== undefined) {
-      let rowIndexToHighlight = recommendation.matchedRow.rowIndex;
-      
-      // If rowIndex is -1 (no exact match, interpolated size), find nearest row in ORIGINAL table
-      if (rowIndexToHighlight === -1 && sizeData.length > 0) {
-        console.log("PerFit: No exact match found (interpolated size), finding nearest row in original table for size:", recommendation.size);
-        
-        // Extract numeric value from recommended size (e.g., "43 1/3" -> 43.333)
-        const recommendedValue = parseFloat(recommendation.size.replace(/\s+\d+\/\d+/, (match: string) => {
-          const parts = match.trim().split(/\s+/);
-          if (parts.length > 1) {
-            const fraction = parts[1].split('/');
-            return ' ' + (parseInt(fraction[0]) / parseInt(fraction[1])).toString();
-          }
-          return match;
-        }));
-        
-        // Find row with closest size value that has a VALID rowIndex (from original table)
-        // Filter out interpolated rows (they might have rowIndex -1 or invalid indices)
-        let minDiff = Infinity;
-        let nearestRowIndex = -1;
-        let nearestRowSize = '';
-        
-        sizeData.forEach((row) => {
-          // Only consider rows that exist in the original table (rowIndex >= 0)
-          if (row.rowIndex >= 0 && row.intSize) {
-            const rowValue = parseFloat(row.intSize.replace(/\s+\d+\/\d+/, (match: string) => {
-              const parts = match.trim().split(/\s+/);
-              if (parts.length > 1) {
-                const fraction = parts[1].split('/');
-                return ' ' + (parseInt(fraction[0]) / parseInt(fraction[1])).toString();
-              }
-              return match;
-            }));
-            
-            const diff = Math.abs(rowValue - recommendedValue);
-            if (diff < minDiff) {
-              minDiff = diff;
-              nearestRowIndex = row.rowIndex;
-              nearestRowSize = row.intSize;
-            }
-          }
-        });
-        
-        if (nearestRowIndex >= 0) {
-          console.log(`PerFit: Found nearest original table row at index ${nearestRowIndex} (size: ${nearestRowSize})`);
-          rowIndexToHighlight = nearestRowIndex;
-        }
-      }
-      
-      // Only highlight if we have a valid index
-      if (rowIndexToHighlight >= 0) {
-        provider.highlightRow(rowIndexToHighlight, recommendation.fitNote);
-      }
-    }
-
-    // Cache the recommendation for Resume State
-    cachedRecommendation = recommendation;
-
-    // Show recommendation
-    console.log(`PerFit: ✅ Recommendation: ${recommendation.size}`);
-    removeActionMenu(); // Remove menu before showing recommendation
-    showRecommendation(recommendation);
-
-  } catch (error) {
-    console.error("PerFit: Error:", error);
-    removeActionMenu(); // Always clean up on error
-  }
-}
-
-/**
  * Remove the action menu from DOM
  */
-function removeActionMenu(): void {
+export function removeActionMenu(): void {
   const host = document.getElementById('perfit-action-host');
   if (host) {
     host.remove();
@@ -435,9 +251,26 @@ function removeActionMenu(): void {
 }
 
 /**
- * Show action menu popup - Simplified design
+ * Remove recommendation box from DOM
  */
-function showActionMenu(): void {
+export function removeRecommendation(): void {
+  const host = document.getElementById('perfit-recommendation-host');
+  if (host) {
+    host.remove();
+    console.log("PerFit: Recommendation removed");
+  }
+}
+
+/**
+ * Show action menu popup - Simplified design
+ * 
+ * @param runPerFitCallback - Callback function to run recommendation logic
+ * @param manualOverride - Optional manual override for stretch detection
+ */
+export function showActionMenu(
+  runPerFitCallback: (manualOverride?: boolean) => Promise<void>,
+  manualOverride?: boolean
+): void {
   // Prevent immediate closure from click-outside handler
   setMenuOpening();
   
@@ -491,7 +324,7 @@ function showActionMenu(): void {
         ">Change your measurements</div>
       `;
 
-      // Knappe-logikk for start view
+      // Button logic for start view
       shadow.getElementById('perfit-run')?.addEventListener('click', async () => {
         const button = shadow.getElementById('perfit-run') as HTMLButtonElement;
         if (button) {
@@ -516,8 +349,8 @@ function showActionMenu(): void {
           `;
         }
         
-        // Run the recommendation logic
-        await runPerFit();
+        // Run the recommendation logic with manual override
+        await runPerFitCallback(manualOverride);
       });
 
       shadow.getElementById('perfit-edit')?.addEventListener('click', async () => {
@@ -625,6 +458,18 @@ function showActionMenu(): void {
               font-size: 14px; box-sizing: border-box;
             ">
           </div>
+          <div>
+            <label style="display: block; color: #374151; font-size: 13px; font-weight: 500; margin-bottom: 4px;">🦶 Foot Width / Fotbredde</label>
+            <select id="input-footWidth" style="
+              width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px;
+              font-size: 14px; box-sizing: border-box; background: white;
+            ">
+              <option value="" ${!profile.footWidth ? 'selected' : ''}>-- Velg --</option>
+              <option value="narrow" ${profile.footWidth === 'narrow' ? 'selected' : ''}>Smal</option>
+              <option value="average" ${profile.footWidth === 'average' ? 'selected' : ''}>Normal</option>
+              <option value="wide" ${profile.footWidth === 'wide' ? 'selected' : ''}>Bred</option>
+            </select>
+          </div>
         </div>
 
         <button id="perfit-save" style="
@@ -647,6 +492,7 @@ function showActionMenu(): void {
         const height = (shadow.getElementById('input-height') as HTMLInputElement)?.value;
         const footLength = (shadow.getElementById('input-footLength') as HTMLInputElement)?.value;
         const shoeSize = (shadow.getElementById('input-shoeSize') as HTMLInputElement)?.value;
+        const footWidth = (shadow.getElementById('input-footWidth') as HTMLSelectElement)?.value as 'narrow' | 'average' | 'wide' | '';
 
         // Update profile in storage
         const updatedProfile = {
@@ -659,7 +505,8 @@ function showActionMenu(): void {
           torsoLength,
           height,
           footLength,
-          shoeSize
+          shoeSize,
+          footWidth: footWidth || undefined // Don't save empty string
         };
 
         await chrome.storage.local.set({ userProfile: updatedProfile });
@@ -673,108 +520,4 @@ function showActionMenu(): void {
     // Initialize with start view
     renderStartView();
   }
-}
-
-/**
- * Handle activation - Smart logic for Resume State
- * 
- * Scenario A: Cached recommendation exists -> Show it immediately
- * Scenario B: No cache -> Show action menu
- * Scenario C: UI already visible -> Toggle (close it)
- */
-function handleActivation(): void {
-  // Check if any UI is already visible
-  const menuVisible = !!document.getElementById('perfit-action-host');
-  const recommendationVisible = !!document.getElementById('perfit-recommendation-host');
-  
-  if (menuVisible || recommendationVisible) {
-    // Scenario C: Toggle - close existing UI
-    removeActionMenu();
-    removeRecommendation();
-    console.log("PerFit: Toggled UI off");
-    return;
-  }
-  
-  if (cachedRecommendation) {
-    // Scenario A: Show cached recommendation directly
-    console.log("PerFit: Showing cached recommendation");
-    setMenuOpening();
-    showRecommendation(cachedRecommendation);
-  } else {
-    // Scenario B: No cache - show action menu
-    console.log("PerFit: Showing action menu");
-    setMenuOpening();
-    showActionMenu();
-  }
-}
-
-/**
- * Remove recommendation box from DOM
- */
-function removeRecommendation(): void {
-  const host = document.getElementById('perfit-recommendation-host');
-  if (host) {
-    host.remove();
-    console.log("PerFit: Recommendation removed");
-  }
-}
-
-/**
- * Click-to-Run Entry Point
- * Runs immediately when injected by background service worker
- */
-
-// Listen for activation messages from background script (Resume State)
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message.action === "ACTIVATE_PERFIT") {
-    console.log("PerFit: Received activation message");
-    handleActivation();
-    sendResponse({ success: true });
-  }
-  return true; // Keep message channel open for async response
-});
-
-// Click-outside-to-close functionality
-let isOpeningMenu = false;
-
-window.addEventListener('mousedown', (event) => {
-  // Ignore if we're currently opening a menu
-  if (isOpeningMenu) {
-    isOpeningMenu = false;
-    return;
-  }
-
-  const actionHost = document.getElementById('perfit-action-host');
-  const recommendationHost = document.getElementById('perfit-recommendation-host');
-
-  // Check if click is outside both menus
-  const clickedOutsideAction = actionHost && !actionHost.contains(event.target as Node);
-  const clickedOutsideRecommendation = recommendationHost && !recommendationHost.contains(event.target as Node);
-
-  if (clickedOutsideAction) {
-    removeActionMenu();
-  }
-
-  if (clickedOutsideRecommendation) {
-    removeRecommendation();
-  }
-}, true); // Use capture phase to handle before any other handlers
-
-// Helper function to prevent immediate closure when opening menu
-function setMenuOpening(): void {
-  isOpeningMenu = true;
-  setTimeout(() => {
-    isOpeningMenu = false;
-  }, 300); // Increased from 100ms to 300ms to prevent immediate closure
-}
-
-// NUCLEAR GUARD: Tillater produktsider (.html eller /p/) så lenge det ikke er en kategoriside
-const path = window.location.pathname.toLowerCase();
-const isProduct = (path.includes(".html") || path.includes("/p/")) && !path.includes("-home");
-
-if (!isProduct) {
-  console.log("PerFit: Not a product page, stopping.");
-} else {
-  // Initial activation on fresh injection
-  handleActivation();
 }

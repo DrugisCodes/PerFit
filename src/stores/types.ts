@@ -11,6 +11,26 @@
  */
 export type GarmentCategory = 'top' | 'bottom' | 'shoes' | 'unknown';
 
+/**
+ * Text-based measurement data (fallback when tables are missing)
+ * Used by Zalando and other stores that provide model info in text format
+ */
+export interface TextMeasurement {
+  modelHeight?: number;      // Model's height in cm (e.g., 189)
+  modelSize: string;         // Size the model is wearing (e.g., "M")
+  itemLength?: number;       // Item length in cm (e.g., 69)
+  itemLengthSize?: string;   // Size for which length is specified (e.g., "M")
+  isAnkleLength?: boolean;   // Whether item is designed as ankle length
+  fitHint?: string;          // Fit hint: 'liten' or 'stor' (small/large)
+  isMoccasin?: boolean;      // Whether item is a moccasin/loafer (stretches significantly)
+  isLeatherBoot?: boolean;   // Whether item is a leather boot (stretches less than moccasin)
+  hasLaces?: boolean;        // Whether boot has laces (affects fit - laced boots are more adjustable)
+  recommendedSizeFromText?: string;  // Expert recommendation from text (e.g., "vi anbefaler størrelse 42")
+  storeRecommendation?: string;      // Store's own recommendation based on purchase history
+  materialInfo?: string;     // Material description (e.g., "semsket skinn", "lær")
+  manualOverride?: boolean;  // Manual user override for moccasin sizing
+}
+
 export interface SizeRow {
   intSize: string;      // International size (S, M, L, XL, etc.) or EU shoe size
   chest: number;        // Chest measurement in cm
@@ -32,6 +52,8 @@ export interface UserProfile {
   height: string;         // Height in cm (for text-based matching)
   footLength?: string;    // Foot length in cm (for shoe matching)
   fitPreference?: number; // 1-10, where 5 is regular fit
+  footWidth?: 'narrow' | 'average' | 'wide'; // Foot width category for shoe sizing
+  // volumentalId?: string; // Future: Volumental API integration for 3D foot scan data
 }
 
 /**
@@ -122,4 +144,15 @@ export interface SizeRecommendation {
   matchedRow?: SizeRow;   // The table row that matched
   fitNote?: string;       // Fit difference note for shoes (e.g., "IDEELL (+0.5 cm plass)")
   lengthNote?: string;    // Length/height mismatch warning (e.g., "Modellen er 10 cm høyere enn deg")
+  
+  // === DUAL RECOMMENDATION (for moccasins/loafers) ===
+  isDual?: boolean;                   // True if showing both snug and comfort options
+  secondarySize?: string;             // Larger/comfort fit size (42 is primary, 43 is secondary)
+  userFootLength?: number;            // User's foot length in cm
+  technicalSize?: string;             // Technical best-fit size (before 'stor' adjustment)
+  isStorAdjusted?: boolean;           // True if size was adjusted down due to 'stor' hint
+  
+  // === STORE RECOMMENDATION CROSS-CHECK ===
+  storeRecommendation?: string;       // Store's own recommendation (e.g., from purchase history)
+  storeRecommendationNote?: string;   // Cross-check result note
 }

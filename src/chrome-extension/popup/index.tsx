@@ -12,24 +12,111 @@ interface ProfileData {
   shoeSize: string;
 }
 
+/**
+ * Detect category from URL - makes popup self-sufficient
+ * No dependency on content script for category detection
+ */
+function detectCategoryFromUrl(url: string): string | null {
+  const urlLower = url.toLowerCase();
+  
+  // Comprehensive shoe detection patterns for Zalando URLs
+  const shoePatterns = [
+    // Path patterns
+    '/sko/', '/shoes/', '/footwear/',
+    '/sneaker', '/boots', '/sandal', '/loafer', '/slipper',
+    '/sko.', '/shoes.', // e.g., /sko.html
+    // URL segment patterns (hyphenated)
+    '-sko-', '-shoes-', '-sneaker', '-boot', '-sandal', '-loafer', '-slipper',
+    // Product name patterns (common in Zalando URLs)
+    'sneakers', 'joggesko', 'løpesko', 'treningssko',
+    'boots', 'støvler', 'støvletter', 'chelsea',
+    'sandaler', 'slippers', 'loafers', 'mokasiner',
+    'sko.html', // Direct product ending
+    // Category indicators
+    '/herresko', '/damesko', '/barnesko',
+    '-herresko', '-damesko', '-barnesko'
+  ];
+  
+  for (const pattern of shoePatterns) {
+    if (urlLower.includes(pattern)) {
+      console.log("Popup: Kategori satt manuelt via URL - matchet pattern:", pattern);
+      return 'shoes';
+    }
+  }
+  
+  return null;
+}
+
 export const Popup = () => {
   const [profile, setProfile] = useState<ProfileData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isZalandoPage, setIsZalandoPage] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [category, setCategory] = useState<string | null>(null);
+  const [isManualStretch, setIsManualStretch] = useState(false);
 
   useEffect(() => {
-    // Check if we're on a Zalando product page
+    // Check if we're on a Zalando product page and detect category from URL
     if (typeof chrome !== "undefined" && chrome.tabs) {
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         const currentTab = tabs[0];
         if (currentTab && currentTab.url) {
-          const url = currentTab.url.toLowerCase();
+          const url = currentTab.url;
+          const urlLower = url.toLowerCase();
           try {
-            const urlObj = new URL(url);
+            const urlObj = new URL(urlLower);
             const pathname = urlObj.pathname;
-            const isZalando = url.includes("zalando") && pathname.includes(".html") && !pathname.includes("-home");
+            const isZalando = urlLower.includes("zalando") && pathname.includes(".html") && !pathname.includes("-home");
             setIsZalandoPage(isZalando);
+
+            if (isZalando) {
+              // PRIMARY: Detect category from URL immediately (self-sufficient, no content script needed)
+              const urlCategory = detectCategoryFromUrl(url);
+              if (urlCategory) {
+                setCategory(urlCategory);
+                console.log("Popup: Kategori satt manuelt via URL:", urlCategory);
+              }
+              
+              // Also check URL for moccasin/loafer keywords to pre-check the checkbox
+              const moccasinKeywordsInUrl = ['loafer', 'mokkasin', 'moccasin', 'driving-shoe'];
+              for (const keyword of moccasinKeywordsInUrl) {
+                if (urlLower.includes(keyword)) {
+                  setIsManualStretch(true);
+                  console.log("Popup: Loafer/mokkasin funnet i URL, pre-sjekker checkbox");
+                  break;
+                }
+              }
+              
+              // SECONDARY: Try content script as backup (also gets isMoccasin flag)
+              if (currentTab.id) {
+                try {
+                  chrome.tabs.sendMessage(
+                    currentTab.id,
+                    { action: "get_category" },
+                    (response) => {
+                      // Graceful error handling - URL detection is primary
+                      if (chrome.runtime.lastError) {
+                        console.log("Popup: Content script ikke tilgjengelig, bruker URL-deteksjon");
+                        return;
+                      }
+                      if (response) {
+                        if (response.category) {
+                          setCategory(response.category);
+                          console.log("Popup: Kategori bekreftet av content script:", response.category);
+                        }
+                        // Pre-check the checkbox if content script detected moccasin/loafer
+                        if (response.isMoccasin) {
+                          setIsManualStretch(true);
+                          console.log("Popup: Mokkasinsøm funnet av content script, pre-sjekker checkbox");
+                        }
+                      }
+                    }
+                  );
+                } catch {
+                  console.log("Popup: Feil ved kontakt med content script, bruker URL-deteksjon");
+                }
+              }
+            }
           } catch {
             setIsZalandoPage(false);
           }
@@ -37,14 +124,20 @@ export const Popup = () => {
       });
     }
 
-    // Load user profile
+    // Load user profile AND check for moccasin flag in storage
     if (typeof chrome !== "undefined" && chrome.storage) {
       try {
-        chrome.storage.local.get(["userProfile"], (result) => {
+        chrome.storage.local.get(["userProfile", "perfit_isMoccasin"], (result) => {
           if (chrome.runtime.lastError) {
             console.error("PerFit Popup: Chrome storage error:", chrome.runtime.lastError);
             setIsLoading(false);
             return;
+          }
+          
+          // Check moccasin flag from storage (set by content script detection)
+          if (result.perfit_isMoccasin === true) {
+            setIsManualStretch(true);
+            console.log("PerFit Popup: Mokkasinflagg funnet i storage, pre-sjekker checkbox");
           }
           
           if (result.userProfile && typeof result.userProfile === "object") {
@@ -108,6 +201,24 @@ export const Popup = () => {
     } catch (err) {
       console.error("PerFit Popup: Error running analysis:", err);
       setIsAnalyzing(false);
+    }
+  };
+
+  const handleManualStretchToggle = async (checked: boolean) => {
+    setIsManualStretch(checked);
+    
+    // Send message to content script to recalculate with override
+    try {
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tabs[0]?.id) {
+        await chrome.tabs.sendMessage(tabs[0].id, {
+          action: "recalculate_with_override",
+          isManualStretch: checked
+        });
+        console.log("PerFit Popup: Sent manual stretch override:", checked);
+      }
+    } catch (err) {
+      console.error("PerFit Popup: Error sending override message:", err);
     }
   };
 
@@ -182,6 +293,22 @@ export const Popup = () => {
           >
             {isAnalyzing ? "Analyzing..." : "Measure size"}
           </button>
+        )}
+
+        {/* Manual Stretch Override (only for shoes) */}
+        {isZalandoPage && category === 'shoes' && (
+          <div className="w-full mb-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
+            <p className="text-xs text-gray-700 font-medium mb-2">Utvider denne skoen seg?</p>
+            <label className="flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={isManualStretch}
+                onChange={(e) => handleManualStretchToggle(e.target.checked)}
+                className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 focus:ring-2"
+              />
+              <span className="ml-2 text-xs text-gray-600">Skinn / Loafer (anbefaler tettere passform)</span>
+            </label>
+          </div>
         )}
 
         {/* Add/Change Measurements Button */}

@@ -27,7 +27,7 @@ export default defineConfig({
       input: {
         popup: resolve(__dirname, "popup.html"),
         options: resolve(__dirname, "options.html"),
-        "content-script": resolve(__dirname, "src/chrome-extension/content-script-new.ts"),
+        "content-script": resolve(__dirname, "src/content/index.ts"),
         background: resolve(__dirname, "src/chrome-extension/background.ts"),
       },
       output: {
