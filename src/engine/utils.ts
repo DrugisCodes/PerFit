@@ -1,3 +1,30 @@
+import { MENS_SHOE_MAPPING } from './constants';
+/**
+ * Estimate foot length in cm from EU shoe size (men)
+ * Uses MENS_SHOE_MAPPING for precise values, falls back to formula if not found.
+ * Handles '42.5', '42,5', '42 1/2', etc.
+ */
+export function estimateFootLengthFromEU(euSizeRaw: string): number | null {
+  if (!euSizeRaw) return null;
+  // Normalize input: replace comma with dot, trim, handle '1/2' and '½'
+  let euSize = euSizeRaw.trim().replace(',', '.');
+  // Handle '1/2' or '½' (e.g. '42 1/2', '42½')
+  if (/1[\s]?\/?2|½/.test(euSizeRaw)) {
+    // Extract base (e.g. '42') and add 0.5
+    const base = parseInt(euSize);
+    if (!isNaN(base)) euSize = (base + 0.5).toString();
+  }
+  // Try mapping first
+  if (MENS_SHOE_MAPPING[euSize]) {
+    return MENS_SHOE_MAPPING[euSize];
+  }
+  // Fallback: 25.5 + (EU - 40) * 0.5
+  const num = parseFloat(euSize);
+  if (!isNaN(num)) {
+    return Math.round((25.5 + (num - 40) * 0.5) * 10) / 10;
+  }
+  return null;
+}
 /**
  * Utility functions for size calculations
  */
@@ -8,6 +35,14 @@
  */
 export function cmToInches(cm: number): number {
   return Math.round(cm / 2.54);
+}
+
+/**
+ * Convert inches to centimeters
+ * 1 inch = 2.54 cm
+ */
+export function inchesToCm(inches: number): number {
+  return Math.round(inches * 2.54);
 }
 
 /**

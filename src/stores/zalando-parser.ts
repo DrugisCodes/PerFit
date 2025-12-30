@@ -63,67 +63,27 @@ export function extractZalandoRecommendation(): string | null {
  * Looks for text like "Varen er liten" or "Varen er stor" with flexible regex matching
  * 
  * PRIORITY ORDER:
- * 1. Passform section (highest priority)
- * 2. Product description areas
- * 3. Body fallback (STRICT - must have context words very close to 'stor'/'liten')
+ * 1. Passform section (pdp-accordion-passform)
+ * 2. Product details section (pdp-accordion-productDetails)
+ * 3. NO body fallback - only search in specific product sections
  */
 export function extractFitHint(): string | null {
   try {
-    // 1. HØYESTE PRIORITET: Passform-seksjonen (accordion)
+    // Vi begrenser søket KUN til Passform-seksjonen for å unngå falske positive
     const passformAccordion = document.querySelector('[data-testid="pdp-accordion-passform"]');
     if (passformAccordion) {
       const text = passformAccordion.textContent?.toLowerCase() || '';
-      
-      if (/(størrelsen|varen|modellen|anbefaler).*liten|liten.*(størrelsen|varen|størrelse|anbefal)/i.test(text)) {
+      // Sjekker kun etter de mest kritiske nøkkelordene i denne spesifikke seksjonen
+      if (text.includes('liten')) {
         console.log(`PerFit [Zalando]: ✅ Fit hint detected (Passform section) - Item runs SMALL`);
-        console.log(`PerFit [Zalando]: Funnet tekst: "${passformAccordion.textContent?.trim()}"`);
         return 'liten';
       }
-      
-      if (/(størrelsen|varen|modellen|anbefaler).*stor|stor.*(størrelsen|varen|størrelse|anbefal)/i.test(text)) {
+      if (text.includes('stor')) {
         console.log(`PerFit [Zalando]: ✅ Fit hint detected (Passform section) - Item runs LARGE`);
-        console.log(`PerFit [Zalando]: Funnet tekst: "${passformAccordion.textContent?.trim()}"`);
         return 'stor';
       }
     }
-    
-    // 2. SEKUNDÆR PRIORITET: Målrettede passform-elementer (klasse .HlZ_Tf)
-    const passformElements = document.querySelectorAll('.HlZ_Tf, [class*="passform"], [class*="fit-hint"]');
-    
-    for (const element of passformElements) {
-      const text = element.textContent?.toLowerCase() || '';
-      
-      if (/(størrelsen|varen|modellen|anbefaler).*liten|liten.*(størrelsen|varen|størrelse|anbefal)/i.test(text)) {
-        console.log(`PerFit [Zalando]: ✅ Fit hint detected (fit element) - Item runs SMALL`);
-        console.log(`PerFit [Zalando]: Funnet tekst: "${element.textContent?.trim()}"`);
-        return 'liten';
-      }
-      
-      if (/(størrelsen|varen|modellen|anbefaler).*stor|stor.*(størrelsen|varen|størrelse|anbefal)/i.test(text)) {
-        console.log(`PerFit [Zalando]: ✅ Fit hint detected (fit element) - Item runs LARGE`);
-        console.log(`PerFit [Zalando]: Funnet tekst: "${element.textContent?.trim()}"`);
-        return 'stor';
-      }
-    }
-    
-    // 3. FALLBACK: Søk i hele document.body MED STRENG BEGRENSNING
-    // Krever at 'stor'/'liten' står RETT ved siden av kontekstord (maks 15 tegn mellom)
-    const bodyText = document.body.textContent?.toLowerCase() || '';
-    
-    // Streng regex: Maks 15 tegn mellom kontekstord og 'liten'
-    if (/(størrelsen|varen|modellen|passform|anbefaler vi).{0,15}\bliten\b|\bliten\b.{0,15}(størrelsen|varen|størrelse|passform|anbefal)/i.test(bodyText)) {
-      console.log("PerFit [Zalando]: ✅ Fit hint detected (body fallback - strict) - Item runs SMALL");
-      return 'liten';
-    }
-    
-    // Streng regex: Maks 15 tegn mellom kontekstord og 'stor'
-    // Unngå 'stor' når det står alene uten passform-kontekst
-    if (/(størrelsen|varen|modellen|passform|anbefaler vi).{0,15}\bstor\b|\bstor\b.{0,15}(størrelsen|varen|størrelse|passform|anbefal)/i.test(bodyText)) {
-      console.log("PerFit [Zalando]: ✅ Fit hint detected (body fallback - strict) - Item runs LARGE");
-      return 'stor';
-    }
-    
-    console.log("PerFit [Zalando]: No specific fit hint found (true to size assumed)");
+    console.log("PerFit [Zalando]: Ingen spesifikk fit-hint funnet i Passform-seksjonen");
     return null;
   } catch (error) {
     console.error("PerFit [Zalando]: Error extracting fit hint:", error);
@@ -186,6 +146,19 @@ export function parseModelMeasurements(text: string): Partial<TextMeasurement> {
       console.log(`PerFit [Zalando]: ✅ Item length extracted: ${measurement.itemLength}cm in size ${measurement.itemLengthSize}`);
     } else {
       console.log(`PerFit [Zalando]: ✅ Item length extracted: ${measurement.itemLength}cm (no specific size mentioned)`);
+    }
+  }
+  
+  // INSEAM EXTRACTION: Extract inside leg length for pants
+  // Handles: "Lengde innside ben: 78 cm i størrelse 33x32", "Inside leg: 80cm size M", etc.
+  const inseamMatch = text.match(/(?:Lengde\s+innside\s+ben|Inside\s+leg|Inseam)[:\s]+(\d{2,3})\s*cm(?:\s+(?:i\s+)?(?:størrelse|size)\s+([A-Z0-9x×/\-]+))?/i);
+  if (inseamMatch) {
+    measurement.inseamLength = parseInt(inseamMatch[1]);
+    if (inseamMatch[2]) {
+      measurement.inseamLengthSize = inseamMatch[2].toUpperCase();
+      console.log(`PerFit [Zalando]: ✅ Inseam length extracted: ${measurement.inseamLength}cm in size ${measurement.inseamLengthSize}`);
+    } else {
+      console.log(`PerFit [Zalando]: ✅ Inseam length extracted: ${measurement.inseamLength}cm (no specific size mentioned)`);
     }
   }
   
@@ -365,29 +338,48 @@ export function scrapeTextMeasurements(): TextMeasurement | null {
     
     // Strategy 1: Try Passform accordion (most specific)
     const passformSection = document.querySelector('[data-testid="pdp-accordion-passform"]');
-    if (passformSection) {
-      text = passformSection.textContent || '';
+    if (passformSection && passformSection.textContent && passformSection.textContent.length > 30) {
+      text = passformSection.textContent;
       console.log("PerFit [Zalando]: Found Passform section");
     }
-    
+
     // Strategy 2: Fallback to broader product description area
     if (!text || text.length < 50) {
       console.log("PerFit [Zalando]: Passform section empty/missing, searching product details...");
       const productDetails = document.querySelector('[data-testid="pdp-product-description"]') ||
                             document.querySelector('.pdp-description') ||
                             document.querySelector('#product-detail');
-      
-      if (productDetails) {
-        text = productDetails.textContent || '';
+      if (productDetails && productDetails.textContent && productDetails.textContent.length > 30) {
+        text = productDetails.textContent;
         console.log("PerFit [Zalando]: Using product details section");
       }
     }
-    
-    // Strategy 3: Last resort - search document body (first 2000 chars for performance)
+
+    // NEW: Try [data-testid="pdp-description"] or [class*="product-description"] if still no text
     if (!text || text.length < 50) {
-      console.log("PerFit [Zalando]: Searching entire page body (first 2000 chars)...");
-      text = (document.body.innerText || document.body.textContent || '').substring(0, 2000);
+      // Vi søker spesifikt i PDP-beskrivelsen, ikke hele bodyen
+      const pdpDesc = document.querySelector('[data-testid="pdp-description"]') || 
+                      document.querySelector('.h-container') ||
+                      document.querySelector('#product-description');
+      if (pdpDesc) {
+        text = pdpDesc.textContent || '';
+        console.log("PerFit [Zalando]: ✅ Fant modell-info i PDP-beskrivelsen");
+      }
     }
+    // Sjekk etter .HlZ_Tf for inseam-info hvis fortsatt ikke funnet
+    if ((!text || text.length < 50)) {
+      const inseamElement = document.querySelector('.HlZ_Tf');
+      if (inseamElement) {
+        text = document.body.innerText.substring(0, 3000);
+        console.log("PerFit [Zalando]: ✅ Fant inseam-info via spesifikk klasse");
+      }
+    }
+    
+    // Strategy 3: Last resort - body fallback er fjernet for å unngå falske treff
+    // if (!text || text.length < 50) {
+    //   console.log("PerFit [Zalando]: Searching entire page body (first 2000 chars)...");
+    //   text = (document.body.innerText || document.body.textContent || '').substring(0, 2000);
+    // }
     
     // Log text sample for debugging
     const textSample = text.substring(0, 300).replace(/\s+/g, ' ');

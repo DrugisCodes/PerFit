@@ -15,10 +15,39 @@
 export function detectCategoryFromPage(): string | null {
   try {
     const url = window.location.href.toLowerCase();
-    
-    // === TARGETED MOCCASIN/LOAFER DETECTION ===
-    // First, get product name from H1 to check for exclusion words
     const h1Text = document.querySelector('h1')?.textContent?.toLowerCase() || '';
+    const pageTitle = document.title.toLowerCase();
+    
+    // === PRIORITY 1: BOTTOMS DETECTION (overrides everything) ===
+    // Keywords that MUST force category to 'bottoms'
+    const bottomsKeywords = ['joggebukse', 'joggebukser', 'sweatpants', 'pants', 'trousers', 'jeans', 
+      'shorts', 'bukse', 'bukser', 'chinos', 'cargo', 'leggings', 'tights', 'skjørt', 'skirt'];
+    
+    // Check URL, H1, and title for bottoms keywords
+    for (const keyword of bottomsKeywords) {
+      if (url.includes(keyword) || h1Text.includes(keyword) || pageTitle.includes(keyword)) {
+        console.log(`PerFit: Bottoms keyword '${keyword}' detected - forcing category to 'bottoms'`);
+        // Clear any incorrect shoe detection from sessionStorage
+        sessionStorage.removeItem('perfit-detectedCategory');
+        sessionStorage.setItem('perfit-detectedCategory', 'bottoms');
+        return 'bottoms';
+      }
+    }
+    
+    // === PRIORITY 2: TOPS DETECTION ===
+    const topsKeywords = ['t-skjorte', 't-shirt', 'tshirt', 'skjorte', 'shirt', 'genser', 'sweater', 
+      'hoodie', 'hettegenser', 'jakke', 'jacket', 'blazer', 'cardigan', 'topp', 'bluse', 'blouse'];
+    
+    for (const keyword of topsKeywords) {
+      if (url.includes(keyword) || h1Text.includes(keyword) || pageTitle.includes(keyword)) {
+        console.log(`PerFit: Tops keyword '${keyword}' detected - forcing category to 'tops'`);
+        sessionStorage.removeItem('perfit-detectedCategory');
+        sessionStorage.setItem('perfit-detectedCategory', 'tops');
+        return 'top';
+      }
+    }
+    
+    // === TARGETED MOCCASIN/LOAFER DETECTION (only if not clothing) ===
     
     // Exclusion words: If product is a boot or sneaker, don't flag as moccasin
     const bootExclusionWords = ['boot', 'boots', 'støvel', 'støvler', 'støvlett', 'støvletter', 'chelsea', 'ankle boot'];
@@ -169,8 +198,9 @@ export function detectCategoryFromPage(): string | null {
       }
     }
     
-    // Check URL for category hints
+    // Check URL for category hints (only if not already detected as clothing)
     if (url.includes('/sko/') || url.includes('/shoes/') || url.includes('/footwear/')) {
+      console.log('PerFit: Shoe category detected from URL path');
       return 'shoes';
     }
     
@@ -213,7 +243,13 @@ export function detectCategoryFromPage(): string | null {
       }
     }
     if (hasShoeSize) {
-      return 'shoes';
+      // Double-check: make sure this isn't clothing with numeric sizes (like jeans 32-42)
+      // Jeans/pants often use waist sizes in the 28-42 range
+      const isPotentialClothing = bottomsKeywords.some(kw => url.includes(kw) || h1Text.includes(kw));
+      if (!isPotentialClothing) {
+        console.log('PerFit: Shoe-style EU sizes detected (36-48 range)');
+        return 'shoes';
+      }
     }
     
     console.log("PerFit: Could not detect category from page content");

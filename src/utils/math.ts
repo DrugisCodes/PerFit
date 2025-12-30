@@ -23,12 +23,27 @@
  * formatDisplaySize("43 1/3") // "43 1/3" (passthrough)
  */
 export function formatDisplaySize(size: string | number): string {
-  // If already a string with fraction notation, return as-is
+  // If already a string with special format, return as-is
   if (typeof size === 'string') {
+    // Preserve fraction notation like "43 1/3"
     if (/\d+\s+\d+\/\d+/.test(size)) {
-      return size; // Already formatted like "43 1/3"
+      return size;
     }
-    size = parseFloat(size.replace(',', '.'));
+    // Preserve W/L format sizes (32x30, 32×30, 32/30, W32/L30, W32 L30, etc.)
+    // IMPORTANT: Do NOT parseFloat these - it truncates to just the first number
+    if (/(?:W)?\s*\d+\s*[x×X/\-\s]+(?:L)?\s*\d+/i.test(size)) {
+      return size.trim();
+    }
+    // Check if this is a text size (S, M, L, XL, etc.) - return as-is
+    if (/^[XSML]{1,3}L?$/i.test(size.trim()) || /^(XXS|XS|S|M|L|XL|XXL|XXXL|2XL|3XL|4XL)$/i.test(size.trim())) {
+      return size.trim();
+    }
+    const parsedSize = parseFloat(size.replace(',', '.'));
+    // If parsing fails, return original string (not 'NaN')
+    if (isNaN(parsedSize)) {
+      return size;
+    }
+    size = parsedSize;
   }
   
   if (isNaN(size)) {

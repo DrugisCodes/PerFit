@@ -1,3 +1,37 @@
+// --- GLOBAL CLICK FLAG ---
+
+// --- MESSAGE HANDLER (Q) ---
+window.addEventListener('message', (event) => {
+  // Only handle messages for PerFit
+  if (!event.data || !event.data.perfit) return;
+  // If message is from internal process (e.g., recalculation), do NOT close recommendation
+  if (event.data.type === 'internal' || event.data.action === 'recalculate') return;
+  // If ACTIVATE_PERFIT and window is open, only update content (do not close)
+  if (event.data.action === 'ACTIVATE_PERFIT') {
+    const host = document.getElementById('perfit-recommendation-host');
+    if (host) return; // Already open, do not close
+  }
+  // If message is a cached recommendation info, do not close
+  if (typeof event.data.message === 'string' && event.data.message.includes('Showing cached recommendation')) {
+    return;
+  }
+  // Otherwise, close recommendation-host
+  const host = document.getElementById('perfit-recommendation-host');
+  if (host) host.remove();
+});
+
+// --- MOUSEDOWN LISTENER ---
+document.addEventListener('mousedown', (e) => {
+  // If click is inside recommendation or on 'Measure size', do nothing (no flag needed)
+  const recHost = document.getElementById('perfit-recommendation-host');
+  if (recHost && recHost.contains(e.target as Node)) {
+    return;
+  }
+  if ((e.target as HTMLElement)?.id === 'perfit-run') {
+    return;
+  }
+  // Otherwise, could handle outside click logic here if needed
+});
 /**
  * PerFit Content Script - UI Manager Module
  * 
@@ -107,12 +141,21 @@ export function showRecommendation(recommendation: SizeRecommendation): void {
       ? `Table: ${recommendation.matchedRow.chest}cm chest` 
       : '';
   } else if (recommendation.category === 'bottom') {
-    measurementText = `Your waist & hip`;
+    // Show waist and inseam (if available) before height for bottoms
+    const waistDisplay = recommendation.userWaist || recommendation.userChest;
+    const inseamDisplay = recommendation.userInseam ? ` • Inseam: ${recommendation.userInseam}cm` : '';
+    const heightDisplay = recommendation.userHeight ? ` • Height: ${recommendation.userHeight}cm` : '';
+    measurementText = `Your waist: ${waistDisplay}cm${inseamDisplay || heightDisplay ? inseamDisplay : ''}${heightDisplay}`;
     tableInfo = recommendation.matchedRow 
       ? `Table: ${recommendation.matchedRow.waist}cm waist / ${recommendation.matchedRow.hip}cm hip` 
       : '';
-    if (recommendation.fitNote) {
-      tableInfo += `<br><span style="color: #FFC107; font-weight: bold;">${recommendation.fitNote}</span>`;
+    // Add 'Perfect leg length match' to fitNote if inseam is a near match
+    let fitNote = recommendation.fitNote || '';
+    if (recommendation.userInseam && recommendation.inseamLength && Math.abs(recommendation.userInseam - recommendation.inseamLength) < 2) {
+      fitNote = (fitNote ? fitNote + ' • ' : '') + 'Perfect leg length match';
+    }
+    if (fitNote) {
+      tableInfo += `<br><span style="color: #FFC107; font-weight: bold;">${fitNote}</span>`;
     }
   } else if (recommendation.category === 'shoes') {
     measurementText = `Your foot length: ${recommendation.userChest}cm`;
@@ -123,26 +166,31 @@ export function showRecommendation(recommendation: SizeRecommendation): void {
     measurementText = `Your measurement: ${recommendation.userChest}cm`;
   }
 
-  // === DUAL RECOMMENDATION LAYOUT FOR MOCCASINS ===
+  // === DUAL RECOMMENDATION LAYOUT ===
+  // Supports both shoes (Snug Fit/Best Fit) and bottoms (Comfort Fit/Short Fit)
   let sizeDisplayHtml = '';
   const isDual = recommendation.isDual;
   
   if (isDual && recommendation.secondarySize) {
+    // Use dynamic labels from recommendation, with fallbacks for shoes
+    const primaryLabel = recommendation.fitNote?.split(' • ')[0] || 'Snug Fit';
+    const primarySubtext = recommendation.category === 'bottom' ? '(Matches waist)' : '(Recommended)';
+    const secondaryLabel = recommendation.secondarySizeNote || 'Best Fit';
+    const secondarySubtext = recommendation.category === 'bottom' ? '(Shorter length)' : '(May be loose)';
+    
     // Dual size display - side by side
-    // Primary (left): Snug Fit - recommended for slip-ons as leather stretches
-    // Secondary (right): Best Fit - technical match, may feel loose over time
     sizeDisplayHtml = `
       <div style="display: flex; gap: 12px; justify-content: center; margin-bottom: 15px;">
         <div style="flex: 1; background: rgba(255,255,255,0.15); padding: 12px; border-radius: 12px; border: 2px solid #fff; text-align: center;">
           <div style="font-size: 28px; font-weight: bold;">${formatDisplaySize(recommendation.size)}</div>
-          <div style="font-size: 10px; font-weight: bold; text-transform: uppercase; margin-top: 4px;">Snug Fit</div>
-          <div style="font-size: 9px; opacity: 0.9;">(Recommended)</div>
+          <div style="font-size: 10px; font-weight: bold; text-transform: uppercase; margin-top: 4px;">${primaryLabel}</div>
+          <div style="font-size: 9px; opacity: 0.9;">${primarySubtext}</div>
         </div>
         
         <div style="flex: 1; background: rgba(255,255,255,0.05); padding: 12px; border-radius: 12px; border: 1px dashed rgba(255,255,255,0.5); opacity: 0.8; text-align: center;">
           <div style="font-size: 28px; font-weight: bold;">${formatDisplaySize(recommendation.secondarySize!)}</div>
-          <div style="font-size: 10px; font-weight: bold; text-transform: uppercase; margin-top: 4px;">Best Fit</div>
-          <div style="font-size: 9px; opacity: 0.9;">(May be loose)</div>
+          <div style="font-size: 10px; font-weight: bold; text-transform: uppercase; margin-top: 4px;">${secondaryLabel}</div>
+          <div style="font-size: 9px; opacity: 0.9;">${secondarySubtext}</div>
         </div>
       </div>
     `;
@@ -195,7 +243,7 @@ export function showRecommendation(recommendation: SizeRecommendation): void {
           ${tableInfo}
         </div>
       ` : ''}
-      ${isDual ? `
+      ${isDual && recommendation.category === 'shoes' ? `
         <div style="font-size: 11px; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px; line-height: 1.4; text-align: left; margin-top: 12px;">
           <strong>Leather stretches over time.</strong> We recommend the Snug Fit to prevent heel slip later.
         </div>

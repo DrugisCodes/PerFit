@@ -11,8 +11,10 @@
 import { detectProvider } from '../stores';
 import { UserProfile, SizeRecommendation } from '../stores/types';
 import { calculateRecommendation, calculateTextBasedRecommendation } from '../engine';
+import { calculateBottomsTextBasedRecommendation } from '../engine/bottoms';
 import { analyzeLengthFit } from './analysis';
 import { showRecommendation, removeActionMenu } from './ui-manager';
+import { detectCategoryFromPage } from './detector';
 
 /**
  * Main execution function - Runs size recommendation logic
@@ -72,8 +74,22 @@ export async function runPerFit(
         const textData = (provider as any).textMeasurement;
         console.log("PerFit: Using text-based measurements", textData);
         
-        // Calculate text-based recommendation
-        const recommendation = calculateTextBasedRecommendation(userProfile, textData);
+        // Detect category early for category-specific fallback
+        const earlyCategory = detectCategoryFromPage();
+        console.log(`PerFit: Early category detection for fallback: ${earlyCategory}`);
+        
+        let recommendation: SizeRecommendation | null = null;
+        
+        // === CATEGORY-SPECIFIC FALLBACK ===
+        if (earlyCategory === 'bottoms' || earlyCategory === 'bottom') {
+          // Use waist-based fallback for bottoms (NEVER use chest)
+          console.log("PerFit: Using BOTTOMS text-based fallback (waist-based)");
+          recommendation = calculateBottomsTextBasedRecommendation(userProfile, textData);
+        } else {
+          // Use chest-based fallback for tops and unknown
+          console.log("PerFit: Using TOPS text-based fallback (chest-based)");
+          recommendation = calculateTextBasedRecommendation(userProfile, textData);
+        }
         
         if (recommendation) {
           // Add length/height analysis

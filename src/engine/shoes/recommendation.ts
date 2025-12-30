@@ -5,6 +5,7 @@
 
 import { SizeRow, UserProfile, SizeRecommendation } from '../../stores/types';
 import { ShoeSize, ShoeContext } from './types';
+import { MENS_SHOE_MAPPING } from '../constants';
 import { buildCompleteSizeList } from './interpolation';
 
 /**
@@ -27,6 +28,19 @@ import { buildCompleteSizeList } from './interpolation';
  * @param textMeasurement - Material and construction info
  * @param dropdownSizes - Available sizes from dropdown (for interpolation)
  */
+export function estimateFootLengthFromEU(euSizeRaw: string): number | null {
+  // Normalize input: handle '42 1/2', '42,5', '42.5', etc.
+  let euSize = euSizeRaw.trim().replace(',', '.');
+  let num = parseFloat(euSize);
+  if (isNaN(num)) return null;
+  // If '1/2' or '½' present, add 0.5
+  if (/1[\s]?\/?2|½/.test(euSizeRaw)) {
+    num = Math.floor(num) + 0.5;
+  }
+  // Formula: (EU - 2) / 1.5
+  return Math.round(((num - 2) / 1.5) * 10) / 10;
+}
+
 export function calculateShoeRecommendation(
   userProfile: UserProfile,
   sizeData: SizeRow[],
@@ -34,7 +48,26 @@ export function calculateShoeRecommendation(
   textMeasurement?: ShoeContext,
   dropdownSizes?: string[]
 ): SizeRecommendation | null {
-  const userFoot = userProfile.footLength ? parseFloat(userProfile.footLength) : null;
+  let userFoot = userProfile.footLength ? parseFloat(userProfile.footLength) : null;
+  let usedEstimate = false;
+  let euSizeUsed = '';
+  if (!userFoot && userProfile.shoeSize) {
+    // Prøv master-tabellen først
+    const mapped = MENS_SHOE_MAPPING[userProfile.shoeSize.replace(',', '.')];
+    if (mapped) {
+      userFoot = mapped;
+      usedEstimate = true;
+      euSizeUsed = userProfile.shoeSize;
+    } else {
+      // Fallback til gammel estimate-funksjon hvis ikke i tabell
+      const est = estimateFootLengthFromEU(userProfile.shoeSize);
+      if (est) {
+        userFoot = est;
+        usedEstimate = true;
+        euSizeUsed = userProfile.shoeSize;
+      }
+    }
+  }
   if (!userFoot) return null;
 
   // Build complete size list with interpolated intermediate sizes
@@ -357,7 +390,7 @@ export function calculateShoeRecommendation(
   // === BUILD RETURN OBJECT ===
   const recommendation: SizeRecommendation = {
     size: isDual && snugSize ? snugSize.size : bestMatch.size,
-    confidence: needsStretchAdjustment ? 0.90 : 0.95,
+    confidence: usedEstimate ? 0.7 : (needsStretchAdjustment ? 0.90 : 0.95),
     category: 'shoes',
     userChest: userFoot,
     targetChest: bestMatch.footLength,
@@ -366,6 +399,9 @@ export function calculateShoeRecommendation(
     fitNote: fitNote,
     userFootLength: userFoot
   };
+  if (usedEstimate) {
+    recommendation.fitNote = (recommendation.fitNote ? recommendation.fitNote + ' • ' : '') + `Estimert fra din EU-størrelse${euSizeUsed ? ' (' + euSizeUsed + ')' : ''}.`;
+  }
   
   // Add dual recommendation fields if applicable
   if (isDual && snugSize && comfortSize) {

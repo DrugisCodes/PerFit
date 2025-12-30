@@ -20,6 +20,8 @@ export interface TextMeasurement {
   modelSize: string;         // Size the model is wearing (e.g., "M")
   itemLength?: number;       // Item length in cm (e.g., 69)
   itemLengthSize?: string;   // Size for which length is specified (e.g., "M")
+  inseamLength?: number;     // Inside leg length in cm (e.g., 78) - extracted from "Lengde innside ben"
+  inseamLengthSize?: string; // Size for which inseam is specified (e.g., "33x32")
   isAnkleLength?: boolean;   // Whether item is designed as ankle length
   fitHint?: string;          // Fit hint: 'liten' or 'stor' (small/large)
   isMoccasin?: boolean;      // Whether item is a moccasin/loafer (stretches significantly)
@@ -137,16 +139,26 @@ export interface SizeRecommendation {
   size: string;           // Recommended size (e.g., "XL")
   confidence: number;     // 0-1, how confident we are (future use)
   category: GarmentCategory; // Type of garment
-  userChest: number;      // User's chest measurement
-  targetChest: number;    // Target chest after adding buffer
+  userChest: number;      // User's chest measurement (or waist for bottoms)
+  targetChest: number;    // Target chest after adding buffer (or waist for bottoms)
   buffer: number;         // Buffer added based on fit preference
   matchedRow?: SizeRow;   // The table row that matched
   fitNote?: string;       // Fit difference note for shoes (e.g., "IDEELL (+0.5 cm plass)")
   lengthNote?: string;    // Length/height mismatch warning (e.g., "Modellen er 10 cm høyere enn deg")
   
-  // === DUAL RECOMMENDATION (for moccasins/loafers) ===
+  // === BOTTOMS-SPECIFIC FIELDS ===
+  userWaist?: number;     // User's waist measurement in cm
+  userHip?: number;       // User's hip measurement in cm
+  userInseam?: number;    // User's inseam/inner leg length in cm
+  userHeight?: number;    // User's height in cm
+  
+  // === INSEAM ANCHOR (for perfect leg match) ===
+  inseamLength?: number; // Product inseam in cm (for UI perfect match logic)
+  inseamLengthSize?: string; // Size for which inseam was measured (optional, for completeness)
+  // === DUAL RECOMMENDATION (for moccasins/loafers and height-based bottoms) ===
   isDual?: boolean;                   // True if showing both snug and comfort options
   secondarySize?: string;             // Larger/comfort fit size (42 is primary, 43 is secondary)
+  secondarySizeNote?: string;         // Label for secondary size (e.g., "Shorter Length", "Comfort Fit")
   userFootLength?: number;            // User's foot length in cm
   technicalSize?: string;             // Technical best-fit size (before 'stor' adjustment)
   isStorAdjusted?: boolean;           // True if size was adjusted down due to 'stor' hint

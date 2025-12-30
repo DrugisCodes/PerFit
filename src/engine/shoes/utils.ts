@@ -45,10 +45,15 @@ export function cleanShoeSize(sizeStr: string): string {
  * formatSizeForDisplay("43 1/3") // "43 1/3" (passthrough)
  */
 export function formatSizeForDisplay(size: string | number): string {
-  // If already a string with fraction notation, return as-is
+  // If already a string with special format, return as-is
   if (typeof size === 'string') {
+    // Preserve fraction notation like "43 1/3"
     if (/\d+\s+\d+\/\d+/.test(size)) {
-      return size; // Already formatted like "43 1/3"
+      return size;
+    }
+    // Preserve W/L format sizes (32x30, 32×30, 32/30, W32/L30, etc.)
+    if (/(?:W)?\s*\d+\s*[x×X/\-\s]+(?:L)?\s*\d+/i.test(size)) {
+      return size.trim();
     }
     size = parseFloat(size.replace(',', '.'));
   }
