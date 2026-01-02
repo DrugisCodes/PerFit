@@ -8,6 +8,38 @@
 import { TextMeasurement } from './types';
 
 /**
+ * Universal text searcher - scans for keywords in container while filtering out noise
+ * @param containerSelector - CSS selector for container to search in
+ * @param keywords - Array of keywords/phrases to search for
+ * @param excludeWords - Array of words/phrases to exclude (e.g., navigation links)
+ * @returns Full text of first matching element, or null if not found
+ */
+function searchForText(
+  containerSelector: string, 
+  keywords: string[], 
+  excludeWords: string[] = ['hopp til', 'hovedinnhold']
+): string | null {
+  const container = document.querySelector(containerSelector);
+  if (!container) return null;
+
+  // Skann alle avsnitt, lister og spenn
+  const elements = container.querySelectorAll('p, span, li');
+  
+  for (const el of elements) {
+    const text = el.textContent?.toLowerCase() || '';
+    
+    // Ignorer elementer med støy-ord
+    if (excludeWords.some(word => text.includes(word))) continue;
+
+    // Sjekk om teksten inneholder noen av våre nøkkelord
+    if (keywords.some(keyword => text.includes(keyword))) {
+      return text;
+    }
+  }
+  return null;
+}
+
+/**
  * Extract Zalando's own size recommendation based on user's purchase history
  * Looks for text like "Anbefalt størrelse: 43" or "Din størrelse: M"
  */
@@ -67,27 +99,168 @@ export function extractZalandoRecommendation(): string | null {
  * 2. Product details section (pdp-accordion-productDetails)
  * 3. NO body fallback - only search in specific product sections
  */
-export function extractFitHint(): string | null {
+/**
+ * Detect product's fit type (Regular, Relaxed, Slim, etc.)
+ * Used for intelligent size adjustment
+ */
+export function detectFitType(): string | undefined {
   try {
-    // Vi begrenser søket KUN til Passform-seksjonen for å unngå falske positive
-    const passformAccordion = document.querySelector('[data-testid="pdp-accordion-passform"]');
-    if (passformAccordion) {
-      const text = passformAccordion.textContent?.toLowerCase() || '';
-      // Sjekker kun etter de mest kritiske nøkkelordene i denne spesifikke seksjonen
-      if (text.includes('liten')) {
-        console.log(`PerFit [Zalando]: ✅ Fit hint detected (Passform section) - Item runs SMALL`);
-        return 'liten';
-      }
-      if (text.includes('stor')) {
-        console.log(`PerFit [Zalando]: ✅ Fit hint detected (Passform section) - Item runs LARGE`);
-        return 'stor';
+    // STRATEGI 1: Let i produktdetaljer etter tekst som inneholder "passform" eller "fit"
+    const fitText = searchForText(
+      '[data-testid="pdp-accordion-detaljer"], [data-testid="pdp-accordion-passform"]',
+      ['passform', 'fit']
+    );
+
+    if (fitText) {
+      console.log(`PerFit [Zalando]: 📋 Fant passform-tekst i accordion: "${fitText.substring(0, 60)}..."`);
+      return analyzeFitText(fitText);
+    }
+    
+    // FIKS: STRATEGI 2 - Deep Scrape av hele document.body hvis accordion er tom
+    console.log('PerFit [Zalando]: Accordion tom, søker i hele document.body...');
+    const bodyText = (document.body.textContent || '').toLowerCase();
+    
+    // Let etter eksplisitte mønstre: "Passform: Relaxed", "Fit: Relaxed", etc.
+    const patterns = [
+      /passform[:\s]+relaxed/i,
+      /fit[:\s]+relaxed/i,
+      /passform[:\s]+slim/i,
+      /fit[:\s]+slim/i,
+      /passform[:\s]+loose/i,
+      /fit[:\s]+loose/i,
+      /relaxed\s+fit/i,
+      /slim\s+fit/i,
+      /loose\s+fit/i
+    ];
+    
+    for (const pattern of patterns) {
+      if (pattern.test(bodyText)) {
+        const match = bodyText.match(pattern)?.[0] || '';
+        console.log(`PerFit [Zalando]: ✅ Fant fit-type via deep scrape: "${match}"`);
+        return analyzeFitText(match);
       }
     }
-    console.log("PerFit [Zalando]: Ingen spesifikk fit-hint funnet i Passform-seksjonen");
+    
+    console.log('PerFit [Zalando]: No fit type found anywhere, defaulting to Regular');
+    return 'Regular';
+  } catch (error) {
+    console.error('PerFit [Zalando]: Error detecting fit type:', error);
+    return undefined;
+  }
+}
+
+/**
+ * Analyserer fit-tekst og returnerer fit-type
+ * Helper function for detectFitType
+ */
+function analyzeFitText(text: string): string {
+  const lowerText = text.toLowerCase();
+  
+  // Sjekk for Relaxed
+  if (lowerText.includes('relaxed') || lowerText.includes('avslappet')) {
+    console.log('PerFit [Zalando]: Fit type detected - Relaxed');
+    return 'Relaxed';
+  }
+  
+  // Sjekk for Slim
+  if (lowerText.includes('slim') || lowerText.includes('smal')) {
+    console.log('PerFit [Zalando]: Fit type detected - Slim');
+    return 'Slim';
+  }
+  
+  // Sjekk for Loose (behandles som Relaxed)
+  if (lowerText.includes('loose') || lowerText.includes('løs')) {
+    console.log('PerFit [Zalando]: Fit type detected - Loose (as Relaxed)');
+    return 'Relaxed';
+  }
+  
+  // Default hvis "passform" eller "fit" ble funnet uten spesifikk type
+  console.log('PerFit [Zalando]: Fit type found but not specific - defaulting to Regular');
+  return 'Regular';
+}
+
+export function extractFitHint(): string | null {
+  try {
+    // Sjekk accordion først (mest presis)
+    const passformAccordion = document.querySelector('[data-testid="pdp-accordion-passform"]');
+    const text = (passformAccordion?.textContent || '').toLowerCase();
+    
+    if (text.includes('liten')) {
+      console.log(`PerFit [Zalando]: ✅ Fit hint detected (Passform section) - Item runs SMALL`);
+      return 'liten';
+    }
+    if (text.includes('stor')) {
+      console.log(`PerFit [Zalando]: ✅ Fit hint detected (Passform section) - Item runs LARGE`);
+      return 'stor';
+    }
+
+    // Fallback til overskrifter/varsler nær størrelsesvelgeren
+    const quickHint = document.querySelector('[class*="size-guide-info"]')?.textContent?.toLowerCase() || '';
+    if (quickHint.includes('liten')) {
+      console.log(`PerFit [Zalando]: ✅ Fit hint detected (size guide) - Item runs SMALL`);
+      return 'liten';
+    }
+    if (quickHint.includes('stor')) {
+      console.log(`PerFit [Zalando]: ✅ Fit hint detected (size guide) - Item runs LARGE`);
+      return 'stor';
+    }
+
+    console.log("PerFit [Zalando]: Ingen spesifikk fit-hint funnet");
     return null;
   } catch (error) {
     console.error("PerFit [Zalando]: Error extracting fit hint:", error);
     return null;
+  }
+}
+
+/**
+ * Extract brand's size suggestion from gray hint box near size picker
+ * Looks for critical warnings like "Størrelsen er liten - vi anbefaler å gå opp en størrelse"
+ * @returns +1 if should size up, -1 if should size down, 0 if no suggestion
+ */
+export function extractBrandSizeSuggestion(): number {
+  try {
+    // FIKS: Bruk querySelectorAll for å finne ALLE varslingsbokser
+    const alertBoxes = document.querySelectorAll('p.HlZ_Tf, .voFjEy');
+    
+    if (alertBoxes.length === 0) {
+      console.log('PerFit [Zalando]: Ingen varslingsbokser funnet (HlZ_Tf/voFjEy)');
+      return 0;
+    }
+
+    console.log(`PerFit [Zalando]: Fant ${alertBoxes.length} varslingsbokser, looper gjennom alle...`);
+
+    // Loop gjennom ALLE treff - ignorer "Hopp til" men fortsett til vi finner "størrelsen er"
+    for (let i = 0; i < alertBoxes.length; i++) {
+      const alertBox = alertBoxes[i];
+      const alertText = (alertBox.textContent || '').toLowerCase();
+      
+      // Ignorer navigasjonslinker, men FORTSETT å lete
+      if (alertText.includes('hopp til') || alertText.includes('hovedinnhold')) {
+        console.log(`PerFit [Zalando]: Element ${i + 1}/${alertBoxes.length} ignorert (navigasjonslink): "${alertText.substring(0, 40)}"`);
+        continue; // GÅ TIL NESTE ELEMENT
+      }
+
+      console.log(`PerFit [Zalando]: ✅ Analyserer element ${i + 1}/${alertBoxes.length}: "${alertText.substring(0, 80)}"`);
+
+      // Sjekk for "stor" + "ned" = Size DOWN (-1)
+      if (alertText.includes('størrelsen er stor') || (alertText.includes('stor') && alertText.includes('gå ned'))) {
+        console.log('PerFit [Zalando]: ⚠️ BRAND SUGGESTION FUNNET: Size runs LARGE (-1)');
+        return -1;
+      }
+
+      // Sjekk for "liten" + "opp" = Size UP (+1)
+      if (alertText.includes('størrelsen er liten') || (alertText.includes('liten') && alertText.includes('gå opp'))) {
+        console.log('PerFit [Zalando]: ⚠️ BRAND SUGGESTION FUNNET: Size runs SMALL (+1)');
+        return 1;
+      }
+    }
+
+    console.log('PerFit [Zalando]: Varslingsbokser funnet, men ingen størrelsesanbefaling detektert');
+    return 0;
+  } catch (error) {
+    console.error('PerFit [Zalando]: Error extracting brand size suggestion:', error);
+    return 0;
   }
 }
 
@@ -169,6 +342,43 @@ export function parseModelMeasurements(text: string): Partial<TextMeasurement> {
   }
   
   return measurement;
+}
+
+/**
+ * Extract the size worn by the model from product details
+ * Searches for patterns like "Modellen bruker str. 31" or "Model wears size M"
+ * @returns Model's size as string, or null if not found
+ */
+export function extractModelSize(): string | null {
+  try {
+    const detailsAccordion = document.querySelector('[data-testid="pdp-accordion-detaljer"]');
+    const passformAccordion = document.querySelector('[data-testid="pdp-accordion-passform"]');
+    
+    const detailsText = (detailsAccordion?.textContent || '').toLowerCase();
+    const passformText = (passformAccordion?.textContent || '').toLowerCase();
+    const combinedText = detailsText + ' ' + passformText;
+    
+    // Norwegian patterns: "Modellen bruker str. 31", "Modellen har på seg 32"
+    const norwegianPattern = /modell(?:en)?\s+(?:bruker|har på seg|brukar)\s+(?:str\.?|størrelse)?\s*([0-9]{2}|[A-Z]{1,3})/i;
+    // English patterns: "Model wears size M", "Model is wearing 32"
+    const englishPattern = /model\s+(?:wears|is wearing)\s+(?:size)?\s*([0-9]{2}|[A-Z]{1,3})/i;
+    
+    const norwegianMatch = combinedText.match(norwegianPattern);
+    const englishMatch = combinedText.match(englishPattern);
+    
+    const match = norwegianMatch || englishMatch;
+    if (match) {
+      const modelSize = match[1].toUpperCase();
+      console.log(`PerFit [Zalando]: ✅ Model size extracted: ${modelSize}`);
+      return modelSize;
+    }
+    
+    console.log('PerFit [Zalando]: No model size found in product details');
+    return null;
+  } catch (error) {
+    console.error('PerFit [Zalando]: Error extracting model size:', error);
+    return null;
+  }
 }
 
 /**

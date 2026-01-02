@@ -4,6 +4,7 @@
  */
 
 import { SizeRow, UserProfile, SizeRecommendation } from '../stores/types';
+import { calculateUniversalTopFallback } from './universal-top-fallback';
 
 /**
  * Calculate recommendation for tops (shirts, t-shirts, sweaters)
@@ -24,8 +25,38 @@ export function calculateTopRecommendation(
   userProfile: UserProfile,
   sizeData: SizeRow[],
   fitHint?: string,
-  textMeasurement?: { isAnkleLength?: boolean; modelHeight?: number; modelSize?: string }
+  textMeasurement?: { isAnkleLength?: boolean; modelHeight?: number; modelSize?: string; fit?: string }
 ): SizeRecommendation | null {
+  // Universal Fallback: when size table is missing
+  if (!sizeData || sizeData.length === 0) {
+    // Check if we have meaningful text data (model info)
+    const hasMeaningfulTextData = textMeasurement && textMeasurement.modelHeight !== undefined;
+    
+    if (hasMeaningfulTextData && textMeasurement.modelSize) {
+      // Use text-based recommendation if model data exists
+      return calculateTextBasedRecommendation(userProfile, {
+        modelHeight: textMeasurement.modelHeight,
+        modelSize: textMeasurement.modelSize,
+        fitHint: fitHint
+      });
+    }
+    
+    // Activate Universal Fallback Mode
+    let fitPreference: 'relaxed' | 'slim' | 'regular' = 'regular';
+    if (textMeasurement?.fit?.toLowerCase() === 'relaxed') {
+      fitPreference = 'relaxed';
+    } else if (textMeasurement?.fit?.toLowerCase() === 'slim') {
+      fitPreference = 'slim';
+    } else if (fitHint?.toLowerCase().includes('liten')) {
+      fitPreference = 'relaxed'; // Size up for items that run small
+    } else if (fitHint?.toLowerCase().includes('stor')) {
+      fitPreference = 'slim'; // Size down for items that run large
+    }
+    
+    console.log('PerFit: Activating Universal Fallback Mode for tops (no size table or model data found)');
+    return calculateUniversalTopFallback(userProfile, fitPreference);
+  }
+  
   const userChest = parseInt(userProfile.chest);
   const userHeight = userProfile.height ? parseInt(userProfile.height) : null;
   

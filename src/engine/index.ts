@@ -31,7 +31,7 @@ export function calculateRecommendation(
   sizeData: SizeRow[],
   category: GarmentCategory,
   fitHint?: string,
-  textMeasurement?: { isAnkleLength?: boolean; isMoccasin?: boolean; materialInfo?: string },
+  textMeasurement?: { isAnkleLength?: boolean; isMoccasin?: boolean; materialInfo?: string; modelHeight?: number; modelSize?: string; fit?: string },
   dropdownSizes?: string[]
 ): SizeRecommendation | null {
   try {
@@ -41,14 +41,11 @@ export function calculateRecommendation(
       return null;
     }
 
-    if (!sizeData || sizeData.length === 0) {
-      console.error("PerFit: No size data provided");
-      return null;
-    }
-
     console.log(`PerFit: Calculating recommendation for category: ${category}`);
+    console.log(`PerFit: Size data available: ${sizeData && sizeData.length > 0 ? 'Yes' : 'No (will use fallback)'}`);
 
     // Category-specific matching logic
+    // Note: Empty sizeData is now handled within each category's logic (including universal fallback)
     if (category === 'top') {
       return calculateTopRecommendation(userProfile, sizeData, fitHint, textMeasurement);
     } else if (category === 'bottom') {
@@ -57,6 +54,11 @@ export function calculateRecommendation(
       // Pass dropdownSizes to shoe calculation for proper size matching
       return calculateShoeRecommendation(userProfile, sizeData, fitHint, textMeasurement, dropdownSizes);
     } else {
+      // For unknown category, only proceed if we have size data
+      if (!sizeData || sizeData.length === 0) {
+        console.warn("PerFit: Unknown category with no size data - cannot provide recommendation");
+        return null;
+      }
       return calculateUnknownCategoryRecommendation(userProfile, sizeData);
     }
 

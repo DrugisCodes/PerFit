@@ -9,7 +9,13 @@
 import { SizeRow, TextMeasurement } from './types';
 import { BaseStoreProvider } from './BaseStoreProvider';
 import { delay, findElementByText } from '../utils/dom';
-import { extractFitHint, scrapeTextMeasurements } from './zalando-parser';
+import { 
+  extractFitHint, 
+  scrapeTextMeasurements, 
+  detectFitType, 
+  extractModelSize,
+  extractBrandSizeSuggestion
+} from './zalando-parser';
 
 /**
  * ZalandoProvider - Handles Zalando.no integration
@@ -54,31 +60,45 @@ export class ZalandoProvider extends BaseStoreProvider {
         if (!isExpanded) {
           console.log("PerFit [Zalando]: Opening dropdown...");
           trigger.click();
-          // Increased wait time for React to render
-          await delay(500);
+          // Initial wait for dropdown to render
+          await delay(400);
         }
         
-        // Polling: Check every 100ms for up to 3 seconds for React portal to appear
+        // Polling: Check every 200ms for up to 1.4 seconds for React portal to appear
         const sizes = await new Promise<string[]>((resolve) => {
           let attempts = 0;
-          const maxAttempts = 30; // 30 * 100ms = 3000ms (increased from 2s)
+          const maxAttempts = 7; // 7 * 200ms = 1400ms (handles slower pages)
           
           const interval = setInterval(() => {
-            // Expanded selectors for robustness
-            const items = document.querySelectorAll(
+            // FIKS: Global søk med fallback-selectors for React Portals
+            const dropdownContainer = document.querySelector('[data-testid="pdp-size-picker-dropdown"]') ||
+                                      document.querySelector('[class*="size-picker-dropdown"]') ||
+                                      document.querySelector('[id*="size-picker"]');
+            
+            if (!dropdownContainer) {
+              attempts++;
+              if (attempts >= maxAttempts) {
+                clearInterval(interval);
+                console.warn('PerFit [Zalando]: Dropdown container never appeared after 1.4s (tried all selectors)');
+                resolve([]);
+              }
+              return;
+            }
+            
+            console.log(`PerFit [Zalando]: ✅ Dropdown container funnet via ${dropdownContainer.className || dropdownContainer.id || 'data-testid'}`);
+            
+            // Find size items within dropdown only
+            const items = dropdownContainer.querySelectorAll(
               '[data-testid="pdp-size-item"], ' +
               '[data-testid="size-picker-list-item"], ' +
-              '[role="option"], ' +
-              'span.voFjEy, ' +
-              'div._0xLoFW span, ' +
-              'span[class*="size-label"]'
+              '[role="option"]'
             );
             
             if (items.length > 0 || attempts >= maxAttempts) {
               clearInterval(interval);
               
               if (items.length > 0) {
-                console.log(`PerFit [Zalando]: Found ${items.length} size options after ${(attempts + 1) * 100}ms`);
+                console.log(`PerFit [Zalando]: Found ${items.length} size options after ${(attempts + 1) * 200}ms`);
               } else {
                 console.warn("PerFit [Zalando]: No size options found after polling");
               }
@@ -86,25 +106,37 @@ export class ZalandoProvider extends BaseStoreProvider {
               const found = Array.from(items)
                 .map(el => {
                   const text = el.textContent?.trim() || "";
-                  // Extract size - support WxL format (32x34), fractions (42 2/3), and regular sizes
-                  const wxlMatch = text.match(/(\d+)\s*x\s*(\d+)/);
+                  
+                  // Extract WxL format FIRST (32x34, 32/34) before filtering
+                  const wxlMatch = text.match(/(\d+)\s*[x\/×]\s*(\d+)/i);
                   if (wxlMatch) {
-                    return `${wxlMatch[1]}x${wxlMatch[2]}`; // Normalize to 32x34 format
+                    return `${wxlMatch[1]}x${wxlMatch[2]}`;
                   }
-                  // Extract size with improved regex for fractions (e.g., "42", "42 2/3", "43 1/3")
-                  const match = text.match(/(\d+(?:\s+\d+\/\d+)?)/);
+                  
+                  // Extract simple size (only numbers at start)
+                  const match = text.match(/^(\d+(?:\s+\d+\/\d+)?)/);
                   return match ? match[1].trim() : "";
                 })
-                .filter(t => t && (/^\d+/.test(t) || /^\d+x\d+$/.test(t)));
+                .filter(t => {
+                  if (!t) return false;
+                  // Length between 1-8 characters
+                  if (t.length < 1 || t.length > 8) return false;
+                  // Must start with a digit
+                  if (!/^\d/.test(t)) return false;
+                  // Filter out noise (status text)
+                  const lower = t.toLowerCase();
+                  if (lower.includes('lager') || lower.includes('igjen') || lower.includes('stock')) return false;
+                  return true;
+                });
               
               resolve(found);
             }
             attempts++;
-          }, 100);
+          }, 200);
         });
         
         allSizes.push(...sizes);
-        console.log(`PerFit [Zalando]: Extracted ${sizes.length} sizes from trigger`);
+        console.log(`PerFit [Zalando]: Extracted ${sizes.length} sizes from dropdown`);
 
         // Close dropdown if we opened it
         if (!isExpanded) {
@@ -158,6 +190,30 @@ export class ZalandoProvider extends BaseStoreProvider {
     const uniqueSizes = Array.from(new Set(allSizes))
       // Filter out notification texts
       .filter(s => !s.toLowerCase().includes('varsle') && !s.toLowerCase().includes('påminnelse'))
+      // ULTRA-STRICT: Max 8 characters (eliminates all IDs, prices, descriptions)
+      .filter(s => {
+        const cleaned = s.trim();
+        // First check: Must be max 8 characters (handles WxL like "32x32" and fractions like "42 2/3")
+        if (cleaned.length > 8) return false;
+        
+        // Must contain either numbers OR valid letter sizes
+        const hasNumbers = /\d/.test(cleaned);
+        const isLetterSize = /^(XS|S|M|L|XL|XXL|XXXL)$/i.test(cleaned);
+        
+        if (!hasNumbers && !isLetterSize) return false;
+        
+        // Accept letter sizes: XS, S, M, L, XL, XXL, XXXL
+        if (isLetterSize) return true;
+        // Accept numeric sizes: 28-40 (common jeans waist range)
+        const num = parseInt(cleaned);
+        if (!isNaN(num) && num >= 28 && num <= 40) return true;
+        // Accept WxL format: 32x32, 31x34, 32/30, etc. (both 'x' and '/' supported)
+        if (/^\d{2}\s*[xX×\/]\s*\d{2}$/.test(cleaned)) return true;
+        // Accept shoe sizes with fractions (e.g., "43 1/3")
+        if (/^\d{2}\s+\d+\/\d+$/.test(cleaned)) return true;
+        // Reject everything else
+        return false;
+      })
       // Sort numerically
       .sort((a, b) => {
         const aNum = parseFloat(a.replace(',', '.').replace(/\s+\d+\/\d+/, ''));
@@ -305,6 +361,22 @@ export class ZalandoProvider extends BaseStoreProvider {
         const textData = this.scrapeTextMeasurements();
         
         if (textData) {
+          // Add fit type detection
+          textData.fit = detectFitType();
+          console.log(`PerFit [Zalando]: Detected fit type: ${textData.fit}`);
+          
+          // Add model size extraction
+          textData.modelSize = extractModelSize() || undefined;
+          if (textData.modelSize) {
+            console.log(`PerFit [Zalando]: Model wears size: ${textData.modelSize}`);
+          }
+          
+          // Add brand size suggestion
+          textData.brandSizeSuggestion = extractBrandSizeSuggestion();
+          if (textData.brandSizeSuggestion !== 0) {
+            console.log(`PerFit [Zalando]: Brand suggests ${textData.brandSizeSuggestion > 0 ? 'sizing UP' : 'sizing DOWN'}`);
+          }
+          
           // Store text data for recommendation engine
           this.textMeasurement = textData;
           console.log("PerFit [Zalando]: ✅ Text-based measurements extracted successfully");
@@ -323,14 +395,30 @@ export class ZalandoProvider extends BaseStoreProvider {
 
       // ALWAYS scrape text measurements for model height (EXCEPT for shoes - not relevant)
       // This enables length/height analysis for clothing products
-      if (detectedCategory !== 'shoes') {
+      if (detectedCategory !== 'shoes' && !this.textMeasurement) {
         console.log("PerFit [Zalando]: Scraping text measurements for length analysis...");
         const textData = this.scrapeTextMeasurements();
         if (textData) {
+          // Add fit type detection
+          textData.fit = detectFitType();
+          console.log(`PerFit [Zalando]: Detected fit type: ${textData.fit}`);
+          
+          // Add model size extraction
+          textData.modelSize = extractModelSize() || undefined;
+          if (textData.modelSize) {
+            console.log(`PerFit [Zalando]: Model wears size: ${textData.modelSize}`);
+          }
+          
+          // Add brand size suggestion (single call, avoid duplicate)
+          textData.brandSizeSuggestion = extractBrandSizeSuggestion();
+          if (textData.brandSizeSuggestion !== 0) {
+            console.log(`PerFit [Zalando]: Brand suggests ${textData.brandSizeSuggestion > 0 ? 'sizing UP' : 'sizing DOWN'}`);
+          }
+          
           this.textMeasurement = textData;
           console.log("PerFit [Zalando]: ✅ Model info extracted for length analysis:", textData);
         }
-      } else {
+      } else if (detectedCategory === 'shoes') {
         console.log("PerFit [Zalando]: Skipping text measurements for shoes (not relevant)");
       }
       

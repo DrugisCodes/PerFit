@@ -17,13 +17,15 @@ export type GarmentCategory = 'top' | 'bottom' | 'shoes' | 'unknown';
  */
 export interface TextMeasurement {
   modelHeight?: number;      // Model's height in cm (e.g., 189)
-  modelSize: string;         // Size the model is wearing (e.g., "M")
+  modelSize?: string;        // Size the model is wearing (e.g., "M") - OPTIONAL
   itemLength?: number;       // Item length in cm (e.g., 69)
   itemLengthSize?: string;   // Size for which length is specified (e.g., "M")
   inseamLength?: number;     // Inside leg length in cm (e.g., 78) - extracted from "Lengde innside ben"
   inseamLengthSize?: string; // Size for which inseam is specified (e.g., "33x32")
   isAnkleLength?: boolean;   // Whether item is designed as ankle length
   fitHint?: string;          // Fit hint: 'liten' or 'stor' (small/large)
+  fit?: string;              // Fit type: 'Relaxed', 'Slim', 'Regular', etc.
+  brandSizeSuggestion?: number; // Brand's size recommendation: +1 (size up), -1 (size down), 0 (no suggestion)
   isMoccasin?: boolean;      // Whether item is a moccasin/loafer (stretches significantly)
   isLeatherBoot?: boolean;   // Whether item is a leather boot (stretches less than moccasin)
   hasLaces?: boolean;        // Whether boot has laces (affects fit - laced boots are more adjustable)
