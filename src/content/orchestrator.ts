@@ -29,6 +29,8 @@ export async function runPerFit(
   manualOverride?: boolean
 ): Promise<void> {
   try {
+    // Start timing
+    const startTime = performance.now();
     console.log("PerFit: Running recommendation...", manualOverride ? `(Manual override: ${manualOverride})` : '');
 
     const provider = detectProvider();
@@ -237,8 +239,13 @@ export async function runPerFit(
     // Cache the recommendation for Resume State
     setCachedRecommendation(recommendation);
 
+    // Calculate execution time
+    const endTime = performance.now();
+    const duration = ((endTime - startTime) / 1000).toFixed(2);
+
     // Show recommendation
     console.log(`PerFit: ✅ Recommendation: ${recommendation.size}`);
+    console.log(`PerFit: ✅ Fullført på ${duration} sekunder`);
     removeActionMenu(); // Remove menu before showing recommendation
     showRecommendation(recommendation);
 

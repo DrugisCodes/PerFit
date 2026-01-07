@@ -243,14 +243,16 @@ export function extractBrandSizeSuggestion(): number {
 
       console.log(`PerFit [Zalando]: ✅ Analyserer element ${i + 1}/${alertBoxes.length}: "${alertText.substring(0, 80)}"`);
 
-      // Sjekk for "stor" + "ned" = Size DOWN (-1)
-      if (alertText.includes('størrelsen er stor') || (alertText.includes('stor') && alertText.includes('gå ned'))) {
+      // Sjekk for "stor" + "ned" = Size DOWN (-1) - støtter både "størrelsen" og "varen"
+      const isLarge = /(størrelsen|varen) er (stor|large)|gå ned en størrelse/i.test(alertText);
+      if (isLarge) {
         console.log('PerFit [Zalando]: ⚠️ BRAND SUGGESTION FUNNET: Size runs LARGE (-1)');
         return -1;
       }
 
-      // Sjekk for "liten" + "opp" = Size UP (+1)
-      if (alertText.includes('størrelsen er liten') || (alertText.includes('liten') && alertText.includes('gå opp'))) {
+      // Sjekk for "liten" + "opp" = Size UP (+1) - støtter både "størrelsen" og "varen"
+      const isSmall = /(størrelsen|varen) er (liten|small)|gå opp en størrelse/i.test(alertText);
+      if (isSmall) {
         console.log('PerFit [Zalando]: ⚠️ BRAND SUGGESTION FUNNET: Size runs SMALL (+1)');
         return 1;
       }
@@ -330,6 +332,19 @@ export function parseModelMeasurements(text: string): Partial<TextMeasurement> {
     if (inseamMatch[2]) {
       measurement.inseamLengthSize = inseamMatch[2].toUpperCase();
       console.log(`PerFit [Zalando]: ✅ Inseam length extracted: ${measurement.inseamLength}cm in size ${measurement.inseamLengthSize}`);
+      
+      // FALLBACK: Hvis modelSize ikke ble funnet tidligere, bruk inseam size
+      if (!measurement.modelSize && measurement.inseamLengthSize) {
+        // Ekstraher bokstavstørrelse fra inseamLengthSize (f.eks. "M" fra "32x30" eller bare "M")
+        const sizeFromInseam = measurement.inseamLengthSize.match(/^([A-Z]+)$/i)?.[1];
+        if (sizeFromInseam) {
+          const validSizes = ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL'];
+          if (validSizes.includes(sizeFromInseam.toUpperCase())) {
+            measurement.modelSize = sizeFromInseam.toUpperCase();
+            console.log(`PerFit [Zalando]: 🔄 Fant modellstørrelse (${measurement.modelSize}) via inseam-detaljer (fallback)`);
+          }
+        }
+      }
     } else {
       console.log(`PerFit [Zalando]: ✅ Inseam length extracted: ${measurement.inseamLength}cm (no specific size mentioned)`);
     }

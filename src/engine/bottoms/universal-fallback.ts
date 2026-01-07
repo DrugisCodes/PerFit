@@ -106,3 +106,107 @@ export function calculateUniversalBottomFallback(
     userHeight: userProfile.height ? parseInt(userProfile.height) : undefined
   };
 }
+
+/**
+ * Emergency fallback for bottoms - Calculated waist conversion
+ * Triggered when:
+ * - No match found in size table
+ * - No model data available
+ * - Dropdown has numeric waist sizes
+ * 
+ * Converts user waist (cm) to inches and finds closest dropdown size
+ */
+export function calculateCalculatedWaistFallback(
+  userWaist: number,
+  userHip: number,
+  userInseam: number | null,
+  userHeight: number | undefined,
+  productInseam: number | undefined,
+  productInseamSize: string | undefined,
+  availableSizes?: string[]
+): SizeRecommendation | null {
+  console.log(`PerFit [BOTTOMS]: ⚠️ INGEN MATCH I TABELL - Aktiverer nødsfallback`);
+  console.log(`PerFit [BOTTOMS]: Brukerens midje: ${userWaist}cm, hoftemål: ${userHip}cm`);
+  
+  if (!availableSizes || availableSizes.length === 0) {
+    console.log(`PerFit [BOTTOMS]: ⚠️ Ingen dropdown-størrelser tilgjengelig for fallback`);
+    return null;
+  }
+  
+  console.log(`PerFit [BOTTOMS]: 🔍 Analyserer dropdown for beregnet match...`);
+  
+  // Extract numeric waist sizes from dropdown
+  const numericWaistSizes: number[] = [];
+  availableSizes.forEach(size => {
+    // Match pure numbers (30, 31, 32)
+    const pureMatch = size.match(/^\d{2,3}$/);
+    if (pureMatch) {
+      numericWaistSizes.push(parseInt(size));
+      return;
+    }
+    
+    // Match W-format (W32, W34)
+    const wMatch = size.match(/^W(\d{2,3})$/i);
+    if (wMatch) {
+      numericWaistSizes.push(parseInt(wMatch[1]));
+      return;
+    }
+    
+    // Match WxL format - extract waist (32x32, 32/32)
+    const wxlMatch = size.match(/^(\d{2,3})[x\/×](\d{2,3})$/i);
+    if (wxlMatch) {
+      numericWaistSizes.push(parseInt(wxlMatch[1]));
+    }
+  });
+  
+  if (numericWaistSizes.length === 0) {
+    console.log(`PerFit [BOTTOMS]: ⚠️ Dropdown inneholder ingen numeriske midjestørrelser`);
+    return null;
+  }
+  
+  console.log(`PerFit [BOTTOMS]: Fant ${numericWaistSizes.length} numeriske midjer i dropdown:`, numericWaistSizes);
+  
+  // Convert user waist from cm to inches
+  const userWaistInches = userWaist / 2.54;
+  console.log(`PerFit [BOTTOMS]: Brukerens midje i tommer: ${userWaistInches.toFixed(1)}"`);
+  
+  // Find closest match
+  let closestSize = numericWaistSizes[0];
+  let minDiff = Math.abs(closestSize - userWaistInches);
+  
+  numericWaistSizes.forEach(size => {
+    const diff = Math.abs(size - userWaistInches);
+    if (diff < minDiff) {
+      minDiff = diff;
+      closestSize = size;
+    }
+  });
+  
+  console.log(`PerFit [BOTTOMS]: Nærmeste match: ${closestSize}" (diff: ${minDiff.toFixed(1)}")`);
+  
+  // Validate: Accept if within +/- 1.5 inches
+  if (minDiff <= 1.5) {
+    console.log(`PerFit [BOTTOMS]: ✅ BEREGNET MATCH AKSEPTERT (innenfor 1.5" toleranse)`);
+    
+    const fallbackNote = `Vi fant ingen direkte match i størrelsestabellen, men basert på din livvidde (${userWaist}cm) tilsvarer dette ca. str ${Math.round(userWaistInches)} i tommer, som er det vi anbefaler.`;
+    
+    return {
+      size: closestSize.toString(),
+      confidence: 0.7,
+      category: 'bottom',
+      userChest: userWaist,
+      targetChest: closestSize * 2.54, // Convert back to cm for reference
+      buffer: 0,
+      fitNote: fallbackNote,
+      userWaist: userWaist,
+      userHip: userHip,
+      userInseam: userInseam || undefined,
+      userHeight: userHeight,
+      inseamLength: productInseam,
+      inseamLengthSize: productInseamSize
+    };
+  } else {
+    console.log(`PerFit [BOTTOMS]: ⚠️ Diff (${minDiff.toFixed(1)}") er over 1.5" toleranse - for usikker for anbefaling`);
+    return null;
+  }
+}
