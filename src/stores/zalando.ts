@@ -64,75 +64,168 @@ export class ZalandoProvider extends BaseStoreProvider {
           await delay(400);
         }
         
-        // Polling: Check every 200ms for up to 1.4 seconds for React portal to appear
+        // Polling: Check every 250ms for up to 2.5 seconds for sizes to appear
         const sizes = await new Promise<string[]>((resolve) => {
           let attempts = 0;
-          const maxAttempts = 7; // 7 * 200ms = 1400ms (handles slower pages)
+          const maxAttempts = 10; // 10 * 250ms = 2500ms
           
           const interval = setInterval(() => {
-            // FIKS: Global søk med fallback-selectors for React Portals
-            const dropdownContainer = document.querySelector('[data-testid="pdp-size-picker-dropdown"]') ||
-                                      document.querySelector('[class*="size-picker-dropdown"]') ||
-                                      document.querySelector('[id*="size-picker"]');
+            attempts++;
             
-            if (!dropdownContainer) {
-              attempts++;
-              if (attempts >= maxAttempts) {
-                clearInterval(interval);
-                console.warn('PerFit [Zalando]: Dropdown container never appeared after 1.4s (tried all selectors)');
-                resolve([]);
-              }
+            // STRATEGY 1: Find dropdown container globally (React Portal can be anywhere)
+            const dropdownContainer = document.querySelector('[data-testid="pdp-size-picker-dropdown"]') ||
+                                      document.querySelector('[class*="SizePickerDropdown"]') ||
+                                      document.querySelector('[class*="size-picker-dropdown"]') ||
+                                      document.querySelector('[id*="size-picker"]') ||
+                                      document.querySelector('[role="listbox"]');
+            
+            if (!dropdownContainer && attempts < maxAttempts) {
+              console.log(`PerFit [Zalando]: Polling ${attempts}/${maxAttempts} - waiting for dropdown container...`);
               return;
             }
             
-            console.log(`PerFit [Zalando]: ✅ Dropdown container funnet via ${dropdownContainer.className || dropdownContainer.id || 'data-testid'}`);
-            
-            // Find size items within dropdown only
-            const items = dropdownContainer.querySelectorAll(
-              '[data-testid="pdp-size-item"], ' +
-              '[data-testid="size-picker-list-item"], ' +
-              '[role="option"]'
-            );
-            
-            if (items.length > 0 || attempts >= maxAttempts) {
+            if (!dropdownContainer) {
               clearInterval(interval);
+              console.warn('PerFit [Zalando]: ⚠️ Dropdown container not found after 2.5s');
+              resolve([]);
+              return;
+            }
+            
+            console.log(`PerFit [Zalando]: ✅ Container found (attempt ${attempts}):`, dropdownContainer.className || dropdownContainer.id);
+            
+            // STRATEGY 2: Find ALL interactive elements within container
+            // Use multiple selector strategies to catch different Zalando layouts
+            const itemSelectors = [
+              // Common patterns
+              '[data-testid*="size-picker"] button',
+              '[data-testid*="size-picker"] li',
+              '[data-testid="pdp-size-item"]',
+              '[data-testid="size-handler-item"]',
+              // Role-based
+              '[role="option"]',
+              '[role="radio"]',
+              // Class-based (Zalando's obfuscated classes)
+              'button[class*="_9"]',  // Common pattern in Zalando class names
+              'li[class*="Size"]',
+              // Broad fallback
+              'button',
+              'li',
+              'label'
+            ];
+            
+            // Try selectors in order until we find elements
+            let items: NodeListOf<Element> | null = null;
+            for (const selector of itemSelectors) {
+              const found = dropdownContainer.querySelectorAll(selector);
+              if (found.length > 0) {
+                items = found;
+                console.log(`PerFit [Zalando]: Found ${found.length} items with selector: "${selector}"`);
+                break;
+              }
+            }
+            
+            if (!items || items.length === 0) {
+              // Try one more time with direct children
+              items = dropdownContainer.querySelectorAll('*');
+              console.log(`PerFit [Zalando]: Fallback to all children: ${items.length} elements`);
+            }
+            
+            console.log(`PerFit [Zalando]: Total elements to scan: ${items.length}`);
+            
+            // Extract sizes from ALL elements
+            const extractedSizes: string[] = [];
+            const seenSizes = new Set<string>();
+            let debugCount = 0;
+            
+            items.forEach(el => {
+              const text = el.textContent?.trim() || '';
               
-              if (items.length > 0) {
-                console.log(`PerFit [Zalando]: Found ${items.length} size options after ${(attempts + 1) * 200}ms`);
-              } else {
-                console.warn("PerFit [Zalando]: No size options found after polling");
+              // DEBUGGING: Log first 10 elements to diagnose
+              if (debugCount < 10) {
+                console.log(`PerFit [Zalando]: Scanning element [${debugCount}]: "${text}" (tag: ${el.tagName})`);
+                debugCount++;
               }
               
-              const found = Array.from(items)
-                .map(el => {
-                  const text = el.textContent?.trim() || "";
-                  
-                  // Extract WxL format FIRST (32x34, 32/34) before filtering
-                  const wxlMatch = text.match(/(\d+)\s*[x\/×]\s*(\d+)/i);
-                  if (wxlMatch) {
-                    return `${wxlMatch[1]}x${wxlMatch[2]}`;
-                  }
-                  
-                  // Extract simple size (only numbers at start)
-                  const match = text.match(/^(\d+(?:\s+\d+\/\d+)?)/);
-                  return match ? match[1].trim() : "";
-                })
-                .filter(t => {
-                  if (!t) return false;
-                  // Length between 1-8 characters
-                  if (t.length < 1 || t.length > 8) return false;
-                  // Must start with a digit
-                  if (!/^\d/.test(t)) return false;
-                  // Filter out noise (status text)
-                  const lower = t.toLowerCase();
-                  if (lower.includes('lager') || lower.includes('igjen') || lower.includes('stock')) return false;
-                  return true;
-                });
+              // Skip empty, navigation, or header text
+              if (!text || 
+                  text.length === 0 || 
+                  text.includes('Velg') || 
+                  text.toLowerCase().includes('størrelse') ||
+                  text.toLowerCase().includes('size') && text.length > 15) {
+                return;
+              }
               
-              resolve(found);
+              // MATCH 1: WxL format (32/32, 32x32)
+              const wxlMatch = text.match(/(\d{2})\s*[x\/×]\s*(\d{2})/i);
+              if (wxlMatch) {
+                const size = `${wxlMatch[1]}/${wxlMatch[2]}`;
+                if (!seenSizes.has(size)) {
+                  extractedSizes.push(size);
+                  seenSizes.add(size);
+                  console.log(`PerFit [Zalando]: ✓ Matched WxL: ${size}`);
+                }
+                return;
+              }
+              
+              // MATCH 2: Pure numbers (30, 31, 32) - MOST COMMON for jeans
+              const pureNumberMatch = text.match(/^\d{2,3}$/);
+              if (pureNumberMatch) {
+                if (!seenSizes.has(text)) {
+                  extractedSizes.push(text);
+                  seenSizes.add(text);
+                  console.log(`PerFit [Zalando]: ✓ Matched number: ${text}`);
+                }
+                return;
+              }
+              
+              // MATCH 3: Numbers with stock status ("32 - 3 left")
+              const numberWithStockMatch = text.match(/^(\d{2,3})\s*[-–—]/);
+              if (numberWithStockMatch) {
+                const size = numberWithStockMatch[1];
+                if (!seenSizes.has(size)) {
+                  extractedSizes.push(size);
+                  seenSizes.add(size);
+                  console.log(`PerFit [Zalando]: ✓ Matched with stock: ${size}`);
+                }
+                return;
+              }
+              
+              // MATCH 4: Letter sizes (S, M, L, XL)
+              const letterMatch = text.match(/^(XXS|XS|S|M|L|XL|XXL|XXXL)$/i);
+              if (letterMatch) {
+                const size = letterMatch[1].toUpperCase();
+                if (!seenSizes.has(size)) {
+                  extractedSizes.push(size);
+                  seenSizes.add(size);
+                  console.log(`PerFit [Zalando]: ✓ Matched letter: ${size}`);
+                }
+                return;
+              }
+              
+              // MATCH 5: Numbers embedded in text (but avoid measurements)
+              if (text.length < 20 && !text.includes('cm') && !text.includes('kr') && !text.includes('NOK')) {
+                const numberMatch = text.match(/\b(\d{2,3})\b/);
+                if (numberMatch) {
+                  const size = numberMatch[1];
+                  const num = parseInt(size);
+                  // Reasonable jeans size range
+                  if (num >= 28 && num <= 42 && !seenSizes.has(size)) {
+                    extractedSizes.push(size);
+                    seenSizes.add(size);
+                    console.log(`PerFit [Zalando]: ✓ Matched embedded number: ${size}`);
+                  }
+                }
+              }
+            });
+            
+            console.log(`PerFit [Zalando]: 📦 Extracted ${extractedSizes.length} sizes:`, extractedSizes);
+            
+            // Success if we found sizes, or timeout reached
+            if (extractedSizes.length > 0 || attempts >= maxAttempts) {
+              clearInterval(interval);
+              resolve(extractedSizes);
             }
-            attempts++;
-          }, 200);
+          }, 250);
         });
         
         allSizes.push(...sizes);
@@ -436,6 +529,44 @@ export class ZalandoProvider extends BaseStoreProvider {
       // Get dropdown sizes for all categories (needed for WxL format detection)
       this.dropdownSizes = await this.scrapeDropdownSizes();
       console.log("PerFit [Zalando]: Dropdown sizes:", this.dropdownSizes);
+      
+      // FALLBACK: If dropdown scraping failed, extract sizes from size guide table
+      if (this.dropdownSizes.length === 0 && bodyMeasureTable) {
+        console.log("PerFit [Zalando]: 🔄 Dropdown empty - extracting sizes from size guide table as fallback");
+        const fallbackSizes: string[] = [];
+        
+        // Get first column (size column) from table
+        const rows = bodyMeasureTable.querySelectorAll('tr');
+        rows.forEach((row, index) => {
+          if (index === 0) return; // Skip header
+          const firstCell = row.querySelector('td');
+          if (firstCell) {
+            const sizeText = firstCell.textContent?.trim() || '';
+            if (sizeText) {
+              // Extract WxL format (32/32)
+              const wxlMatch = sizeText.match(/(\d{2})\s*[\/x×]\s*(\d{2})/i);
+              if (wxlMatch) {
+                fallbackSizes.push(`${wxlMatch[1]}/${wxlMatch[2]}`);
+              }
+              // Extract pure numbers (32)
+              else if (/^\d{2,3}$/.test(sizeText)) {
+                fallbackSizes.push(sizeText);
+              }
+              // Extract letter sizes (M, L)
+              else if (/^(XXS|XS|S|M|L|XL|XXL|XXXL)$/i.test(sizeText)) {
+                fallbackSizes.push(sizeText.toUpperCase());
+              }
+            }
+          }
+        });
+        
+        if (fallbackSizes.length > 0) {
+          this.dropdownSizes = fallbackSizes;
+          console.log(`PerFit [Zalando]: ✅ Fallback successful - extracted ${fallbackSizes.length} sizes from table:`, fallbackSizes);
+        } else {
+          console.warn("PerFit [Zalando]: ⚠️ Both dropdown and table fallback failed to extract sizes");
+        }
+      }
 
       // Use base class scraping methods
       if (detectedCategory === 'shoes') {
