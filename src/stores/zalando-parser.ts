@@ -116,9 +116,21 @@ export function detectFitType(): string | undefined {
       return analyzeFitText(fitText);
     }
     
-    // FIKS: STRATEGI 2 - Deep Scrape av hele document.body hvis accordion er tom
-    console.log('PerFit [Zalando]: Accordion tom, søker i hele document.body...');
-    const bodyText = (document.body.textContent || '').toLowerCase();
+    // OPTIMIZED STRATEGI 2 - Scoped search in product info container (NOT entire body)
+    console.log('PerFit [Zalando]: Accordion tom, søker i produktinfo-seksjon...');
+    
+    // Find product info container (restricts search to ~50 elements instead of 600+)
+    const productContainer = document.querySelector('[data-testid="pdp-product-info"]') ||
+                            document.querySelector('[class*="product-info"]') ||
+                            document.querySelector('main') ||
+                            document.querySelector('[role="main"]');
+    
+    if (!productContainer) {
+      console.log('PerFit [Zalando]: No product container found, defaulting to Regular');
+      return 'Regular';
+    }
+    
+    const containerText = (productContainer.textContent || '').toLowerCase();
     
     // Let etter eksplisitte mønstre: "Passform: Relaxed", "Fit: Relaxed", etc.
     const patterns = [
@@ -133,15 +145,16 @@ export function detectFitType(): string | undefined {
       /loose\s+fit/i
     ];
     
+    // EARLY EXIT: Stop as soon as we find a match
     for (const pattern of patterns) {
-      if (pattern.test(bodyText)) {
-        const match = bodyText.match(pattern)?.[0] || '';
-        console.log(`PerFit [Zalando]: ✅ Fant fit-type via deep scrape: "${match}"`);
-        return analyzeFitText(match);
+      if (pattern.test(containerText)) {
+        const match = containerText.match(pattern)?.[0] || '';
+        console.log(`PerFit [Zalando]: ✅ Fant fit-type via scoped search: "${match}"`);
+        return analyzeFitText(match); // EARLY EXIT
       }
     }
     
-    console.log('PerFit [Zalando]: No fit type found anywhere, defaulting to Regular');
+    console.log('PerFit [Zalando]: No fit type found, defaulting to Regular');
     return 'Regular';
   } catch (error) {
     console.error('PerFit [Zalando]: Error detecting fit type:', error);
@@ -272,6 +285,7 @@ export function extractBrandSizeSuggestion(): number {
  */
 export function parseModelMeasurements(text: string): Partial<TextMeasurement> {
   const measurement: Partial<TextMeasurement> = { modelSize: '' };
+  let foundCount = 0; // Track how many measurements we've found
   
   // UPGRADED REGEX: Extract model height with flexible pattern
   // Handles: "Modellhøyde: 187 cm", "Modellen er 189 cm", "Model: 185cm", etc.
@@ -279,6 +293,7 @@ export function parseModelMeasurements(text: string): Partial<TextMeasurement> {
   if (heightMatch) {
     measurement.modelHeight = parseInt(heightMatch[1]);
     console.log(`PerFit [Zalando]: ✅ Model height extracted: ${measurement.modelHeight}cm`);
+    foundCount++;
   } else {
     console.log("PerFit [Zalando]: No model height found in text (often not available)");
   }
@@ -302,12 +317,19 @@ export function parseModelMeasurements(text: string): Partial<TextMeasurement> {
     if (isValidSize && !isInvalidWord) {
       measurement.modelSize = extractedSize;
       console.log(`PerFit [Zalando]: ✅ Model size extracted: ${measurement.modelSize}`);
+      foundCount++;
     } else {
       console.warn(`PerFit [Zalando]: ⚠️ Rejected invalid size '${extractedSize}' - not a standard clothing size`);
       console.log(`PerFit [Zalando]: Valid sizes: ${validSizes.join(', ')}, or numeric (32-999)`);
     }
   } else {
     console.log("PerFit [Zalando]: ⚠️ Could not extract model size from text (will use fallback logic)");
+  }
+  
+  // EARLY EXIT: If we have height, size, stop processing (unless looking for length)
+  if (foundCount >= 2 && measurement.modelHeight && measurement.modelSize) {
+    console.log('PerFit [Zalando]: ⚡ Early exit - found modelHeight and modelSize');
+    // Note: We still continue to check for length measurements as they are valuable
   }
   
   // UPGRADED REGEX: Extract item length with flexible pattern
@@ -434,7 +456,7 @@ export function detectMoccasinMaterial(): { isMoccasin: boolean; materialInfo: s
     }
   }
   
-  // BREDERE SØK: Finn produktdetaljer-seksjonen
+  // OPTIMIZED: Finn produktdetaljer-seksjonen med scoped search
   let productDetailsSection: Element | null = null;
   
   // Strategi 1: Spesifikke data-testid selektorer
@@ -442,19 +464,43 @@ export function detectMoccasinMaterial(): { isMoccasin: boolean; materialInfo: s
                           document.querySelector('[data-testid="pdp-accordion-details"]') ||
                           document.querySelector('.dp_pdp_details');
   
-  // Strategi 2: Søk etter elementer som INNEHOLDER teksten 'Produktdetaljer' eller 'Detaljer'
+  // Strategi 2: OPTIMIZED - Restrict search to product info container (NOT entire document)
   if (!productDetailsSection) {
-    console.log("PerFit [Zalando]: Standard selektorer feilet, søker etter tekst 'Produktdetaljer'...");
-    const allElements = document.querySelectorAll('div, section, article, details');
+    console.log("PerFit [Zalando]: Standard selektorer feilet, søker i produktinfo-container...");
     
-    for (const element of allElements) {
-      const heading = element.querySelector('h2, h3, h4, button, summary');
-      const headingText = heading?.textContent?.toLowerCase() || '';
+    // First find the product info container to limit scope
+    const productContainer = document.querySelector('[data-testid="pdp-product-info"]') ||
+                            document.querySelector('[class*="product-info"]') ||
+                            document.querySelector('main') ||
+                            document.querySelector('[role="main"]');
+    
+    if (!productContainer) {
+      console.log("PerFit [Zalando]: ⚠️ Produktcontainer ikke funnet, hopper over detaljsøk");
+      // Continue without productDetailsSection - will use fallback strategies
+    } else {
+      // BLACKLIST: Exclude navigation elements
+      const blacklistSelectors = 'header, footer, nav, [role="navigation"], [class*="navigation"], [class*="breadcrumb"]';
+      const blacklistedElements = productContainer.querySelectorAll(blacklistSelectors);
+      const blacklistSet = new Set(blacklistedElements);
       
-      if (headingText.includes('produktdetaljer') || headingText.includes('detaljer')) {
-        productDetailsSection = element;
-        console.log(`PerFit [Zalando]: ✅ Fant element med tekst '${heading?.textContent?.trim()}'`);
-        break;
+      // Only search within product container and exclude blacklisted elements
+      const allElements = productContainer.querySelectorAll('div, section, article, details');
+      console.log(`PerFit [Zalando]: Søker i ${allElements.length} elementer (ned fra ~600+)`);
+      
+      for (const element of allElements) {
+        // Skip if blacklisted
+        if (blacklistSet.has(element) || Array.from(blacklistedElements).some(bl => bl.contains(element))) {
+          continue;
+        }
+        
+        const heading = element.querySelector('h2, h3, h4, button, summary');
+        const headingText = heading?.textContent?.toLowerCase() || '';
+        
+        if (headingText.includes('produktdetaljer') || headingText.includes('detaljer')) {
+          productDetailsSection = element;
+          console.log(`PerFit [Zalando]: ✅ Fant element med tekst '${heading?.textContent?.trim()}'`);
+          break; // EARLY EXIT
+        }
       }
     }
   }
@@ -474,11 +520,13 @@ export function detectMoccasinMaterial(): { isMoccasin: boolean; materialInfo: s
   const moccasinKeywords = ['mokkasinsøm', 'mokkasiner', 'loafer'];
   const materialKeywords = ['semsket skinn', 'lær', 'skinn'];
   
-  // STRATEGI 1: Skann listeelementer hvis tilgjengelig (mest presist)
+  // OPTIMIZED STRATEGI 1: Skann listeelementer med early exit
   if (detailListItems && detailListItems.length > 0) {
-    console.log("PerFit [Zalando]: Skanner listeelementer for nøkkelord...");
+    console.log(`PerFit [Zalando]: Skanner ${detailListItems.length} listeelementer for nøkkelord...`);
     
-    detailListItems.forEach((li, index) => {
+    // Use for loop instead of forEach to allow early exit
+    for (let index = 0; index < detailListItems.length; index++) {
+      const li = detailListItems[index];
       const liText = li.textContent?.toLowerCase() || '';
       
       // Sjekk etter mokkasino-konstruksjon
@@ -488,24 +536,32 @@ export function detectMoccasinMaterial(): { isMoccasin: boolean; materialInfo: s
           allFoundKeywords.push(keyword);
           console.log(`PerFit: Mokkasinsøm funnet i detaljer!`);
           console.log(`PerFit [Zalando]: ✅ Funnet '${keyword}' i listeelement #${index + 1}: "${li.textContent?.trim()}"`);
+          break; // Stop checking other moccasin keywords
         }
       }
       
       // Sjekk etter materiale
-      for (const keyword of materialKeywords) {
-        if (liText.includes(keyword)) {
-          if (!foundMaterialInfo) {
+      if (!foundMaterialInfo) { // Only search if not already found
+        for (const keyword of materialKeywords) {
+          if (liText.includes(keyword)) {
             foundMaterialInfo = keyword;
+            allFoundKeywords.push(keyword);
+            // Hvis vi finner semsket skinn/lær, antar vi det er mokkasino
+            if (!isMoccasin && (keyword === 'semsket skinn' || keyword === 'lær')) {
+              isMoccasin = true;
+            }
+            console.log(`PerFit [Zalando]: ✅ Funnet materiale '${keyword}' i listeelement #${index + 1}: "${li.textContent?.trim()}"`);
+            break; // Stop checking other material keywords
           }
-          allFoundKeywords.push(keyword);
-          // Hvis vi finner semsket skinn/lær, antar vi det er mokkasino
-          if (!isMoccasin && (keyword === 'semsket skinn' || keyword === 'lær')) {
-            isMoccasin = true;
-          }
-          console.log(`PerFit [Zalando]: ✅ Funnet materiale '${keyword}' i listeelement #${index + 1}: "${li.textContent?.trim()}"`);
         }
       }
-    });
+      
+      // EARLY EXIT: Stop scanning if we found both moccasin type AND material
+      if (isMoccasin && foundMaterialInfo) {
+        console.log(`PerFit [Zalando]: ✅ Early exit - all data found at element ${index + 1}/${detailListItems.length}`);
+        break;
+      }
+    }
   } else {
     // STRATEGI 2: Fallback - søk i passform section text hvis tilgjengelig
     const passformSection = document.querySelector('[data-testid="pdp-accordion-passform"]');

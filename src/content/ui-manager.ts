@@ -141,20 +141,23 @@ export function showRecommendation(recommendation: SizeRecommendation): void {
       ? `Table: ${recommendation.matchedRow.chest}cm chest` 
       : '';
   } else if (recommendation.category === 'bottom') {
-    // Show waist and inseam (if available) before height for bottoms
+    // Show waist, inseam, and height for bottoms
     const waistDisplay = recommendation.userWaist || recommendation.userChest;
     const inseamDisplay = recommendation.userInseam ? ` • Inseam: ${recommendation.userInseam}cm` : '';
     const heightDisplay = recommendation.userHeight ? ` • Height: ${recommendation.userHeight}cm` : '';
-    measurementText = `Your waist: ${waistDisplay}cm${inseamDisplay || heightDisplay ? inseamDisplay : ''}${heightDisplay}`;
+    measurementText = `Your waist: ${waistDisplay}cm${inseamDisplay}${heightDisplay}`;
     tableInfo = recommendation.matchedRow 
       ? `Table: ${recommendation.matchedRow.waist}cm waist / ${recommendation.matchedRow.hip}cm hip` 
       : '';
-    // Add 'Perfect leg length match' to fitNote if inseam is a near match
+    
+    // Orange footer text: Convert shorthand to descriptive Norwegian
     let fitNote = recommendation.fitNote || '';
-    if (recommendation.userInseam && recommendation.inseamLength && Math.abs(recommendation.userInseam - recommendation.inseamLength) < 2) {
-      fitNote = (fitNote ? fitNote + ' • ' : '') + 'Perfect leg length match';
-    }
     if (fitNote) {
+      // Transform shorthand codes to descriptive text
+      fitNote = fitNote
+        .replace(/−1 str\. \(Stor i str\.\)/g, 'Mindre størrelse grunnet stor i størrelsen')
+        .replace(/\+1 str\. \(Liten i str\.\)/g, 'Større størrelse grunnet liten i størrelsen');
+      
       tableInfo += `<br><span style="color: #FFC107; font-weight: bold;">${fitNote}</span>`;
     }
   } else if (recommendation.category === 'shoes') {
@@ -172,11 +175,11 @@ export function showRecommendation(recommendation: SizeRecommendation): void {
   const isDual = recommendation.isDual;
   
   if (isDual && recommendation.secondarySize) {
-    // Use dynamic labels from recommendation, with fallbacks for shoes
-    const primaryLabel = recommendation.fitNote?.split(' • ')[0] || 'Snug Fit';
-    const primarySubtext = recommendation.category === 'bottom' ? '(Matches waist)' : '(Recommended)';
-    const secondaryLabel = recommendation.secondarySizeNote || 'Best Fit';
-    const secondarySubtext = recommendation.category === 'bottom' ? '(Shorter length)' : '(May be loose)';
+    // Use dynamic labels from recommendation
+    const primaryLabel = recommendation.fitNote?.split(' • ')[0] || 'Best Fit';
+    const primarySubtext = ''; // Remove hardcoded subtext - rely on fitNote
+    const secondaryLabel = recommendation.secondarySizeNote || 'Alternative';
+    const secondarySubtext = ''; // Remove hardcoded subtext - rely on secondarySizeNote
     
     // Dual size display - side by side
     sizeDisplayHtml = `
@@ -184,13 +187,13 @@ export function showRecommendation(recommendation: SizeRecommendation): void {
         <div style="flex: 1; background: rgba(255,255,255,0.15); padding: 12px; border-radius: 12px; border: 2px solid #fff; text-align: center;">
           <div style="font-size: 28px; font-weight: bold;">${formatDisplaySize(recommendation.size)}</div>
           <div style="font-size: 10px; font-weight: bold; text-transform: uppercase; margin-top: 4px;">${primaryLabel}</div>
-          <div style="font-size: 9px; opacity: 0.9;">${primarySubtext}</div>
+          ${primarySubtext ? `<div style="font-size: 9px; opacity: 0.9;">${primarySubtext}</div>` : ''}
         </div>
         
         <div style="flex: 1; background: rgba(255,255,255,0.05); padding: 12px; border-radius: 12px; border: 1px dashed rgba(255,255,255,0.5); opacity: 0.8; text-align: center;">
           <div style="font-size: 28px; font-weight: bold;">${formatDisplaySize(recommendation.secondarySize!)}</div>
           <div style="font-size: 10px; font-weight: bold; text-transform: uppercase; margin-top: 4px;">${secondaryLabel}</div>
-          <div style="font-size: 9px; opacity: 0.9;">${secondarySubtext}</div>
+          ${secondarySubtext ? `<div style="font-size: 9px; opacity: 0.9;">${secondarySubtext}</div>` : ''}
         </div>
       </div>
     `;

@@ -47,16 +47,48 @@ export function calculateWxLRecommendation(
     console.log(`PerFit [WxL]: Adjusted DOWN due to brand suggestion: ${targetW + 1} -> ${targetW}`);
   }
 
-  // --- 2. BEREGN TARGET L (LENGDE) ---
-  let targetL = 32; 
+  // --- 2. BEREGN TARGET L (LENGDE) - PRIORITIZE INSEAM OVER HEIGHT ---
+  let targetL = 32;
+  let lengthCalculationMethod = 'default'; // Track which method was used
   const modelHeight = textData?.modelHeight || 185;
   const modelLMatch = textData?.inseamLengthSize?.match(/[xX\/](\d{2})/);
   const modelL = modelLMatch ? parseInt(modelLMatch[1]) : 32;
+  const userInseam = parseInt(userProfile.inseam || "0");
+  const modelInseam = textData?.inseamLength || 0;
   
-  if (userHeight > 0) {
+  // PRIORITY 1: Direct inseam comparison (most accurate)
+  if (userInseam > 0 && modelInseam > 0) {
+    const inseamDiff = userInseam - modelInseam;
+    
+    // ACCURATE CALCULATION: Each L increment = 2 inches = 5.08cm
+    // Convert cm difference to inches, then divide by 2 to get L size difference
+    const inseamDiffInches = inseamDiff / 2.54;
+    const exactLengthDiff = inseamDiffInches / 2; // Each L size = 2 inches
+    
+    // More aggressive rounding for significant differences (>1.3 = round up/down more)
+    let lengthAdjustment: number;
+    if (Math.abs(exactLengthDiff) >= 1.3) {
+      // For large differences, round away from zero (more aggressive)
+      lengthAdjustment = exactLengthDiff > 0 ? Math.ceil(exactLengthDiff) : Math.floor(exactLengthDiff);
+    } else {
+      // For small differences, use standard rounding
+      lengthAdjustment = Math.round(exactLengthDiff);
+    }
+    
+    targetL = modelL + lengthAdjustment;
+    lengthCalculationMethod = 'inseam';
+    console.log(`PerFit [WxL]: ✅ INSEAM-BASED: Model inseam ${modelInseam}cm (L${modelL}) -> User inseam ${userInseam}cm`);
+    console.log(`PerFit [WxL]:    → Difference: ${inseamDiff}cm = ${inseamDiffInches.toFixed(2)} inches = ${exactLengthDiff.toFixed(2)} L sizes`);
+    console.log(`PerFit [WxL]:    → Adjustment: ${lengthAdjustment} sizes → L${targetL}`);
+  }
+  // FALLBACK: Height-based estimation (less accurate, only if inseam missing)
+  else if (userHeight > 0) {
     const heightDiff = userHeight - modelHeight;
     targetL = modelL + Math.round(heightDiff / 3);
-    console.log(`PerFit [WxL]: Model ${modelHeight}cm L${modelL} -> User ${userHeight}cm L${targetL} (diff: ${heightDiff}cm)`);
+    lengthCalculationMethod = 'height';
+    console.log(`PerFit [WxL]: ⚠️ HEIGHT-BASED (inseam unavailable): Model ${modelHeight}cm L${modelL} -> User ${userHeight}cm L${targetL} (diff: ${heightDiff}cm)`);
+  } else {
+    console.log(`PerFit [WxL]: ⚠️ DEFAULT: No height or inseam data available, using L${targetL}`);
   }
 
   // --- 3. MATCH MOT DROPDOWN (MED NORMALISERING) ---
@@ -104,18 +136,18 @@ export function calculateWxLRecommendation(
     const tightW = targetW - 1;
     finalSecondary = looseMatch || `${tightW}x${targetL}`;
     
-    secondaryNote = "TIGHT FIT – Sitter helt tett uten belte";
+    secondaryNote = "Smalere passform";
   } else if (brandSuggestion < 0) {
     // Varen er STOR: Best Fit er allerede justert ned (W31)
     // Alternativ er STØRRE (W32 - relaxed fit)
     const relaxedW = targetW + 1;
     finalSecondary = looseMatch || `${relaxedW}x${targetL}`;
     
-    secondaryNote = "RELAXED – Litt romsligere midje. Krever belte";
+    secondaryNote = "Romsligere midje";
   } else {
     // Normal vare: Loose Fit er én størrelse opp
     finalSecondary = looseMatch || `${targetW + 1}x${targetL}`;
-    secondaryNote = "Loose Fit - For en romsligere midje";
+    secondaryNote = "Romsligere midje";
   }
   
   console.log(`PerFit [WxL]: Final recommendation - Best: ${finalSize}, Alternative: ${finalSecondary}`);
@@ -126,24 +158,31 @@ export function calculateWxLRecommendation(
     if (Math.abs(row.waist - targetWaistCm) < 3) matchedRow = row;
   });
 
-  // Bygg fitNote basert på justeringer (FORENKLET VERSJON)
-  let fitNote = "Best Fit";
-  const heightDiff = Math.abs(userHeight - modelHeight);
+  // Bygg fitNote basert på justeringer - KORT OG KONSIS
+  const notes: string[] = [];
   
-  // Smart høyde-advarsel: Kun hvis vi IKKE har endret lengden
-  const heightWarning = (heightDiff > 10 && targetL === modelL) 
-    ? `\n⚠️ Modellen er ${heightDiff}cm ${userHeight < modelHeight ? 'høyere' : 'lavere'} enn deg` 
-    : '';
-  
+  // Brand size adjustment indicator
   if (brandSuggestion < 0) {
-    // STOR: Varen er stor - vi har gått ned én størrelse
-    fitNote = `BEST FIT – Sitter som din normale størrelse${heightWarning}`;
+    notes.push('−1 str. (Stor i str.)');
   } else if (brandSuggestion > 0) {
-    // LITEN: Varen er liten - vi har gått opp én størrelse
-    fitNote = `BEST FIT – Justert opp for komfort${heightWarning}`;
-  } else {
-    fitNote = `Best Fit${heightWarning}`;
+    notes.push('+1 str. (Liten i str.)');
   }
+  
+  // Length adjustment indicator
+  if (lengthCalculationMethod === 'inseam') {
+    if (targetL !== modelL) {
+      notes.push('✓ Tilpasset lengde');
+    }
+  } else if (lengthCalculationMethod === 'height') {
+    const heightDiff = Math.abs(userHeight - modelHeight);
+    if (heightDiff > 10 && targetL === modelL) {
+      notes.push('⚠ Sjekk lengde');
+    } else if (targetL !== modelL) {
+      notes.push('✓ Tilpasset lengde');
+    }
+  }
+  
+  const fitNote = notes.length > 0 ? notes.join(' • ') : '';
 
   // Sjekk for duplikater mellom finalSize og finalSecondary
   const isDualValid = finalSize !== finalSecondary;

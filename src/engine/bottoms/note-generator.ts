@@ -26,7 +26,7 @@ export interface FitNotes {
  */
 export function generateInseamAnchorNote(
   productInseam: number | undefined,
-  productInseamSize: string | undefined,
+  _productInseamSize: string | undefined,
   userInseam: number | null
 ): string {
   if (!productInseam || !userInseam) {
@@ -35,18 +35,14 @@ export function generateInseamAnchorNote(
   
   const inseamDiff = Math.abs(productInseam - userInseam);
   
-  if (inseamDiff <= 1.5 && productInseamSize) {
-    const lockedLength = productInseamSize.match(/L(\d{2})$/i)?.[1] || 
-                        productInseamSize.split('X')[1] || 
-                        productInseamSize.split('/')[1] || 
-                        productInseamSize.split(' ')[1];
-    return `Size ${lockedLength} is a confirmed ${productInseam}cm match for your legs based on product details`;
+  if (inseamDiff <= 1.5) {
+    return '✓ Perfekt lengde';
   } else if (inseamDiff <= 3) {
-    return `Your inseam: ${userInseam}cm • Item inseam: ${productInseam}cm → Good fit`;
+    return '✓ God lengde';
   } else if (productInseam > userInseam) {
-    return `Your inseam: ${userInseam}cm • Item inseam: ${productInseam}cm → May need hemming`;
+    return '⚠ Trenger korting';
   } else {
-    return `Your inseam: ${userInseam}cm • Item inseam: ${productInseam}cm → May be short`;
+    return '⚠ Kan bli kort';
   }
 }
 
@@ -61,8 +57,7 @@ export function generateBeltLogicNote(
     return '';
   }
   
-  const waistDiff = targetWaist - originalWaist;
-  return `Vi har valgt denne for å sikre at lengden blir riktig for deg. Midjen kan være ${waistDiff.toFixed(1)}cm romsligere, så du må kanskje bruke belte, men da unngår du at buksen ser for kort ut.`;
+  return '⚠ Krever belte';
 }
 
 /**
@@ -74,9 +69,6 @@ export function generateFitNotes(params: FitNoteParams): FitNotes {
     productInseam,
     productInseamSize,
     isAnkleLength,
-    hasModelData,
-    fit,
-    shouldIgnoreHip,
     originalWaist,
     targetSize,
     brandFitNote,
@@ -89,63 +81,45 @@ export function generateFitNotes(params: FitNoteParams): FitNotes {
   // Generate belt logic note
   const beltLogicNote = generateBeltLogicNote(targetSize.waist, originalWaist);
   
-  // Build primary fit note
+  // Build primary fit note with concise tags
   let primaryFitNote = '';
+  const notes: string[] = [];
   
   // Priority 1: Brand fit note (from model analysis)
   if (brandFitNote) {
     primaryFitNote = brandFitNote;
   }
   // Priority 2: Inseam anchor note (strong match)
-  else if (inseamAnchorNote && !brandFitNote) {
-    primaryFitNote = inseamAnchorNote;
+  else if (inseamAnchorNote) {
+    notes.push(inseamAnchorNote);
   }
-  // Priority 3: Belt logic (size chosen for length)
-  else if (beltLogicNote) {
-    primaryFitNote = beltLogicNote;
-  }
-  // Priority 4: Inseam comparison for standard cases
-  else if (userInseam && targetSize.inseam && !brandFitNote && !beltLogicNote) {
+  // Priority 3: Inseam comparison for standard cases
+  else if (userInseam && targetSize.inseam) {
     const diff = targetSize.inseam - userInseam;
     if (isAnkleLength) {
-      primaryFitNote = 'Designed to end at the ankle';
+      notes.push('✓ Ankellengde');
     } else if (diff > 4) {
-      primaryFitNote = `Warning: Inseam is ${diff.toFixed(1)}cm longer than your ${userInseam}cm legs - may need hemming`;
+      notes.push('⚠ Trenger korting');
     } else if (diff < -3) {
-      primaryFitNote = 'May be slightly short in the legs';
-    } else if (diff > 2) {
-      primaryFitNote = `Pants are ${diff.toFixed(1)}cm longer, can be hemmed if needed`;
+      notes.push('⚠ Kan bli kort');
+    } else if (Math.abs(diff) <= 2) {
+      notes.push('✓ God lengde');
     }
   }
-  // Priority 5: Generic fit note
-  else if (!hasModelData && !beltLogicNote) {
-    primaryFitNote = `Recommended ${targetSize.intSize} based on ${fit || 'fit type'} and your ${originalWaist}cm waist`;
+  
+  // Add belt logic if needed
+  if (beltLogicNote) {
+    notes.push(beltLogicNote);
   }
   
   // Add stretch warning if applicable
   if (stretch === 0 && targetSize.waist === originalWaist) {
-    primaryFitNote += (primaryFitNote ? ' • ' : '') + '(No stretch - may feel tight)';
+    notes.push('⚠ Uten stretch');
   }
   
-  // Add hip filtering note if applicable
-  if (shouldIgnoreHip && !brandFitNote) {
-    primaryFitNote += (primaryFitNote ? ' • ' : '') + 'Hip measurement ignored (smaller than size chart)';
-  }
-  
-  // Add inseam info if not already included and belt logic was used
-  if (beltLogicNote && inseamAnchorNote && primaryFitNote === beltLogicNote) {
-    primaryFitNote += ' • ' + inseamAnchorNote;
-  } else if (beltLogicNote && userInseam && targetSize.inseam && primaryFitNote === beltLogicNote) {
-    const diff = targetSize.inseam - userInseam;
-    if (isAnkleLength) {
-      primaryFitNote += ' • Designed to end at the ankle';
-    } else if (diff > 4) {
-      primaryFitNote += ` • Warning: Inseam is ${diff.toFixed(1)}cm longer than your ${userInseam}cm legs - may need hemming`;
-    } else if (diff < -3) {
-      primaryFitNote += ' • May be slightly short in the legs';
-    } else if (diff > 2) {
-      primaryFitNote += ` • Pants are ${diff.toFixed(1)}cm longer, can be hemmed if needed`;
-    }
+  // Combine notes if no brand note
+  if (!primaryFitNote) {
+    primaryFitNote = notes.join(' • ');
   }
   
   return {
@@ -163,16 +137,16 @@ export function generateDualFitNote(
   fit: string | undefined
 ): string {
   if (hasModelData) {
-    return 'Best Fit - Clean look without being baggy';
+    return '✓ Perfekt passform';
   }
-  return `Best Fit (${fit || 'Relaxed'})`;
+  return `✓ ${fit || 'Relaxed'}`;
 }
 
 /**
  * Generate secondary size note for dual recommendations
  */
 export function generateSecondaryNote(
-  secondaryWaist: number
+  _secondaryWaist: number
 ): string {
-  return `Romsligere i midjen (${secondaryWaist}cm), men kan være litt lang`;
+  return 'Romsligere passform';
 }
